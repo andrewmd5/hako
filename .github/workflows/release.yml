@@ -48,8 +48,6 @@ jobs:
           # npm has a bug, nothing we can do.
           rm -rf package-lock.json
           npm i
-          # just until uwasi deploys a new version
-          npm run patch:deps
 
       - name: generate builds (TS)
         working-directory: embedders/ts

@@ -23,7 +23,6 @@
     "format": "biome format --write",
     "lint": "biome lint --error-on-warnings",
     "lint:fix": "biome lint --fix",
-    "patch:deps": "patch -p1 -i patches/uwasi+1.4.0.patch",
     "generate:version": "node --experimental-strip-types tools/update-verison.ts",
     "generate:builds": "node --experimental-strip-types tools/generate-builds.ts"
   },
@@ -65,6 +64,6 @@
     "zx": "8.5.2"
   },
   "dependencies": {
-    "uwasi": "1.4.0"
+    "uwasi": "1.4.1"
   }
 }
