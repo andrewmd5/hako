@@ -50,13 +50,10 @@
     "email": "collab@andrew.im",
     "url": "https://andrew.im"
   },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/andrewmd5/hakojs.git"
-  },
+  "repository": "https://github.com/andrewmd5/hako",
   "homepage": "https://hakojs.com",
   "bugs": {
-    "url": "https://github.com/andrewmd5/hakojs/issues"
+    "url": "https://github.com/andrewmd5/hako/issues"
   },
   "license": "Apache-2.0",
   "devDependencies": {
