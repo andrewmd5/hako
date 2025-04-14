@@ -33,6 +33,25 @@ It is also incredibly tiny. The release build is ~800KB.
 
 Hako is a fork of [PrimJS](https://github.com/lynx-family/primjs), which in sythentic benchmarks shows performance gains of 28% over QuickJS. Compiling to WebAssembly has no noticable impact on performance as the amazing JIT compilers of JavaScriptCore/Bun, V8/NodeJS, and Wasmtime allow code to run at near-native speeds. You can enable profiling in Hako to see how your code is performing.
 
+Here's a simple string concatenation benchmark comparing Hako to QuickJS and QuickJS-NG:
+
+```javascript
+const t1 = Date.now()
+let str = '';
+for (let i = 0; i < 1000_000; i++) {
+  str += 'a';
+}
+const t2 = Date.now()
+console.log(t2 - t1);
+
+// Results:
+// quickjs-ng: 6854ms
+// quickjs: 112ms
+// hako: 92ms
+```
+
+As you can see, Hako outperforms both QuickJS and QuickJS-NG in this common operation, with QuickJS-NG being particularly slow at string concatenation.​​​​​​​​​​​​​​​​
+
 ## Notice
 
 This project is still in early access - documentation is a work in progress, and the API/ABI should not be considered stable. If you wish to contribute, please do so by opening an issue or a pull request for further discussion. Your feedback is greatly appreciated.
