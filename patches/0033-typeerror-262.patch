@@ -1,0 +1,65 @@
+From 297062041fc6be2a1670e595a37c3b85581ab5ab Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Sun, 13 Apr 2025 18:30:52 +0900
+Subject: [PATCH] changed js_throw_type_error ES5 workaround to be more
+ compatible with test262
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 26 ++++++++++-------------
+ 1 file changed, 11 insertions(+), 15 deletions(-)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index fc2e64c..b39e63b 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -15005,22 +15005,18 @@ QJS_STATIC __exception int js_operator_delete(LEPUSContext *ctx,
+   return 0;
+ }
+ 
+-QJS_STATIC LEPUSValue js_throw_type_error(LEPUSContext *ctx,
+-                                          LEPUSValueConst this_val, int argc,
+-                                          LEPUSValueConst *argv) {
+-  return LEPUS_ThrowTypeError(ctx, "invalid property access");
+-}
+-
+ /* XXX: not 100% compatible, but mozilla seems to use a similar
+    implementation to ensure that caller in non strict mode does not
+    throw (ES5 compatibility) */
+-QJS_STATIC LEPUSValue js_function_proto_caller(LEPUSContext *ctx,
+-                                               LEPUSValueConst this_val,
+-                                               int argc,
+-                                               LEPUSValueConst *argv) {
++QJS_STATIC LEPUSValue js_throw_type_error(LEPUSContext *ctx,
++                                          LEPUSValueConst this_val,
++                                          int argc,
++                                          LEPUSValueConst *argv)
++{
+   LEPUSFunctionBytecode *b = JS_GetFunctionBytecode(this_val);
+-  if (!b || (b->js_mode & JS_MODE_STRICT) || !b->has_prototype) {
+-    return js_throw_type_error(ctx, this_val, 0, NULL);
++  if (!b || (b->js_mode & JS_MODE_STRICT) || !b->has_prototype || argc >= 1)
++  {
++    return LEPUS_ThrowTypeError(ctx, "invalid property access");
+   }
+   return LEPUS_UNDEFINED;
+ }
+@@ -52812,13 +52808,13 @@ void LEPUS_AddIntrinsicBaseObjects(LEPUSContext *ctx) {
+   ctx->throw_type_error = LEPUS_NewCFunction(ctx, js_throw_type_error, NULL, 0);
+ 
+   /* add caller and arguments properties to throw a TypeError */
+-  obj1 = LEPUS_NewCFunction(ctx, js_function_proto_caller, "get caller", 0);
++
+   JS_DefineProperty_RC(ctx, ctx->function_proto, JS_ATOM_caller,
+-                       LEPUS_UNDEFINED, obj1, ctx->throw_type_error,
++                       LEPUS_UNDEFINED, ctx->throw_type_error, ctx->throw_type_error,
+                        LEPUS_PROP_HAS_GET | LEPUS_PROP_HAS_SET |
+                            LEPUS_PROP_HAS_CONFIGURABLE |
+                            LEPUS_PROP_CONFIGURABLE);
+-  LEPUS_FreeValue(ctx, obj1);
++
+   JS_DefineProperty_RC(
+       ctx, ctx->function_proto, JS_ATOM_arguments, LEPUS_UNDEFINED,
+       ctx->throw_type_error, ctx->throw_type_error,
+-- 
+2.39.5 (Apple Git-154)
+

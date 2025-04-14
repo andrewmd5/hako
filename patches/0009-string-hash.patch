@@ -1,0 +1,111 @@
+From 7bbe80784041694a1e78f564e9ad3cdc33accd7b Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Mon, 7 Apr 2025 16:00:07 +0900
+Subject: [PATCH] use FNV + SIMD for string hashing
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 79 +++++++++++++++++++----
+ 1 file changed, 66 insertions(+), 13 deletions(-)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 1dcc0a6..6b2e02d 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -114,6 +114,10 @@ int64_t HEAP_TAG_INNER = 0;
+ #ifndef EMSCRIPTEN
+ #define EMSCRIPTEN
+ #endif
++#if defined(__WASI_SDK__)
++#include <wasm_simd128.h>
++#define FNV_PRIME 16777619u
++#endif
+ 
+ #pragma clang diagnostic push
+ #pragma clang diagnostic ignored "-Wconversion"
+@@ -2283,21 +2287,70 @@ static inline int32_t JSRefDeleteProperty(LEPUSContext *ctx, LEPUSValue obj,
+ }
+ #endif
+ 
+-/* XXX: could use faster version ? */
+-QJS_STATIC inline uint32_t hash_string8(const uint8_t *str, size_t len,
+-                                        uint32_t h) {
+-  size_t i;
+-
+-  for (i = 0; i < len; i++) h = h * 263 + str[i];
+-  return h;
++QJS_STATIC inline uint32_t hash_string8(const uint8_t *str, size_t len, uint32_t h) {
++#if defined(__WASI_SDK__)
++    size_t i = 0;
++    while (i + 16 <= len) {
++        v128_t block = wasm_v128_load(&str[i]);
++        h ^= wasm_i8x16_extract_lane(block, 0);  h *= FNV_PRIME;
++        h ^= wasm_i8x16_extract_lane(block, 1);  h *= FNV_PRIME;
++        h ^= wasm_i8x16_extract_lane(block, 2);  h *= FNV_PRIME;
++        h ^= wasm_i8x16_extract_lane(block, 3);  h *= FNV_PRIME;
++        h ^= wasm_i8x16_extract_lane(block, 4);  h *= FNV_PRIME;
++        h ^= wasm_i8x16_extract_lane(block, 5);  h *= FNV_PRIME;
++        h ^= wasm_i8x16_extract_lane(block, 6);  h *= FNV_PRIME;
++        h ^= wasm_i8x16_extract_lane(block, 7);  h *= FNV_PRIME;
++        h ^= wasm_i8x16_extract_lane(block, 8);  h *= FNV_PRIME;
++        h ^= wasm_i8x16_extract_lane(block, 9);  h *= FNV_PRIME;
++        h ^= wasm_i8x16_extract_lane(block, 10); h *= FNV_PRIME;
++        h ^= wasm_i8x16_extract_lane(block, 11); h *= FNV_PRIME;
++        h ^= wasm_i8x16_extract_lane(block, 12); h *= FNV_PRIME;
++        h ^= wasm_i8x16_extract_lane(block, 13); h *= FNV_PRIME;
++        h ^= wasm_i8x16_extract_lane(block, 14); h *= FNV_PRIME;
++        h ^= wasm_i8x16_extract_lane(block, 15); h *= FNV_PRIME;
++        i += 16;
++    }
++    for (; i < len; i++) {
++        h ^= str[i];
++        h *= FNV_PRIME;
++    }
++    return h;
++#else
++    size_t i;
++    for (i = 0; i < len; i++) {
++        h = h * 263 + str[i];
++    }
++    return h;
++#endif
+ }
+ 
+-QJS_STATIC inline uint32_t hash_string16(const uint16_t *str, size_t len,
+-                                         uint32_t h) {
+-  size_t i;
+-
+-  for (i = 0; i < len; i++) h = h * 263 + str[i];
+-  return h;
++QJS_STATIC inline uint32_t hash_string16(const uint16_t *str, size_t len, uint32_t h) {
++#if defined(__WASI_SDK__)
++    size_t i = 0;
++    while (i + 8 <= len) {
++        v128_t block = wasm_v128_load(&str[i]);
++        h ^= wasm_i16x8_extract_lane(block, 0); h *= FNV_PRIME;
++        h ^= wasm_i16x8_extract_lane(block, 1); h *= FNV_PRIME;
++        h ^= wasm_i16x8_extract_lane(block, 2); h *= FNV_PRIME;
++        h ^= wasm_i16x8_extract_lane(block, 3); h *= FNV_PRIME;
++        h ^= wasm_i16x8_extract_lane(block, 4); h *= FNV_PRIME;
++        h ^= wasm_i16x8_extract_lane(block, 5); h *= FNV_PRIME;
++        h ^= wasm_i16x8_extract_lane(block, 6); h *= FNV_PRIME;
++        h ^= wasm_i16x8_extract_lane(block, 7); h *= FNV_PRIME;
++        i += 8;
++    }
++    for (; i < len; i++) {
++        h ^= str[i];
++        h *= FNV_PRIME;
++    }
++    return h;
++#else
++    size_t i;
++    for (i = 0; i < len; i++) {
++        h = h * 263 + str[i];
++    }
++    return h;
++#endif
+ }
+ 
+ QJS_STATIC uint32_t hash_string(const JSString *str, uint32_t h) {
+-- 
+2.39.5 (Apple Git-154)
+

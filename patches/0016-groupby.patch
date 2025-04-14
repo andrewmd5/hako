@@ -1,0 +1,178 @@
+From 038918bb5a7bd2ff6cfb1ac2d26f9512163edad0 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Mon, 7 Apr 2025 22:21:54 +0900
+Subject: [PATCH] added Object.groupBy and Map.groupBy
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 134 ++++++++++++++++++++++
+ 1 file changed, 134 insertions(+)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 7ad7ccd..d4eeca7 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -368,6 +368,8 @@ QJS_STATIC LEPUSValue js_compile_regexp(LEPUSContext *ctx,
+ QJS_STATIC void gc_decref(LEPUSRuntime *rt);
+ QJS_STATIC int JS_NewClass1(LEPUSRuntime *rt, LEPUSClassID class_id,
+                             const LEPUSClassDef *class_def, JSAtom name);
++ QJS_STATIC LEPUSValue js_object_groupBy(LEPUSContext *ctx, LEPUSValueConst this_val,
++                                 int argc, LEPUSValueConst *argv, int is_map);
+ 
+ typedef enum JSStrictEqModeEnum {
+   JS_EQ_STRICT,
+@@ -36751,6 +36753,7 @@ static const LEPUSCFunctionListEntry js_object_funcs[] = {
+     LEPUS_CFUNC_DEF("getOwnPropertyNames", 1, js_object_getOwnPropertyNames),
+     LEPUS_CFUNC_DEF("getOwnPropertySymbols", 1,
+                     js_object_getOwnPropertySymbols),
++    LEPUS_CFUNC_MAGIC_DEF("groupBy", 2, js_object_groupBy, 0),
+     LEPUS_CFUNC_MAGIC_DEF("keys", 1, js_object_keys, JS_ITERATOR_KIND_KEY),
+     LEPUS_CFUNC_MAGIC_DEF("values", 1, js_object_keys, JS_ITERATOR_KIND_VALUE),
+     LEPUS_CFUNC_MAGIC_DEF("entries", 1, js_object_keys,
+@@ -48033,6 +48036,136 @@ QJS_STATIC LEPUSValue js_map_forEach(LEPUSContext *ctx,
+   return LEPUS_UNDEFINED;
+ }
+ 
++QJS_STATIC LEPUSValue js_object_groupBy(LEPUSContext *ctx, LEPUSValueConst this_val,
++                                 int argc, LEPUSValueConst *argv, int is_map)
++{
++  LEPUSValueConst cb, args[2];
++  LEPUSValue res, iter, next, groups, key, v, prop;
++  LEPUSAtom key_atom = JS_ATOM_NULL;
++  int64_t idx;
++  BOOL done;
++
++  // "is function?" check must be observed before argv[0] is accessed
++  cb = argv[1];
++  if (check_function(ctx, cb))
++    return LEPUS_EXCEPTION;
++
++  iter = JS_GetIterator(ctx, argv[0], /*is_async*/ FALSE);
++  if (LEPUS_IsException(iter))
++    return LEPUS_EXCEPTION;
++
++  key = LEPUS_UNDEFINED;
++  key_atom = JS_ATOM_NULL;
++  v = LEPUS_UNDEFINED;
++  prop = LEPUS_UNDEFINED;
++  groups = LEPUS_UNDEFINED;
++
++  next = LEPUS_GetProperty(ctx, iter, JS_ATOM_next);
++  if (LEPUS_IsException(next))
++    goto exception;
++
++  if (is_map)
++  {
++    groups = js_map_constructor(ctx, LEPUS_UNDEFINED, 0, NULL, 0);
++  }
++  else
++  {
++    groups = LEPUS_NewObjectProto(ctx, LEPUS_NULL);
++  }
++  if (LEPUS_IsException(groups))
++    goto exception;
++
++  for (idx = 0;; idx++)
++  {
++    if (idx >= MAX_SAFE_INTEGER)
++    {
++      LEPUS_ThrowTypeError(ctx, "too many elements");
++      goto iterator_close_exception;
++    }
++    v = JS_IteratorNext(ctx, iter, next, 0, NULL, &done);
++    if (LEPUS_IsException(v))
++      goto exception;
++    if (done)
++      break; // v is JS_UNDEFINED
++
++    args[0] = v;
++    args[1] = LEPUS_NewInt64(ctx, idx);
++    key = LEPUS_Call(ctx, cb, ctx->global_obj, 2, args);
++    if (LEPUS_IsException(key))
++      goto iterator_close_exception;
++
++    if (is_map)
++    {
++      prop = js_map_get(ctx, groups, 1, (LEPUSValueConst *)&key, 0);
++    }
++    else
++    {
++      key_atom = LEPUS_ValueToAtom(ctx, key);
++      LEPUS_FreeValue(ctx, key);
++      key = LEPUS_UNDEFINED;
++      if (key_atom == JS_ATOM_NULL)
++        goto iterator_close_exception;
++      prop = LEPUS_GetProperty(ctx, groups, key_atom);
++    }
++    if (LEPUS_IsException(prop))
++      goto exception;
++
++    if (LEPUS_IsUndefined(prop))
++    {
++      prop = LEPUS_NewArray(ctx);
++      if (LEPUS_IsException(prop))
++        goto exception;
++      if (is_map)
++      {
++        args[0] = key;
++        args[1] = prop;
++        res = js_map_set(ctx, groups, 2, args, 0);
++        if (LEPUS_IsException(res))
++          goto exception;
++        LEPUS_FreeValue(ctx, res);
++      }
++      else
++      {
++        prop = LEPUS_DupValue(ctx, prop);
++        if (LEPUS_DefinePropertyValue(ctx, groups, key_atom, prop,
++                                   LEPUS_PROP_C_W_E) < 0)
++        {
++          goto exception;
++        }
++      }
++    }
++    res = js_array_push(ctx, prop, 1, (LEPUSValueConst *)&v, /*unshift*/ 0);
++    if (LEPUS_IsException(res))
++      goto exception;
++    // res is an int64
++
++    LEPUS_FreeValue(ctx, prop);
++    LEPUS_FreeValue(ctx, key);
++    LEPUS_FreeAtom(ctx, key_atom);
++    LEPUS_FreeValue(ctx, v);
++    prop = LEPUS_UNDEFINED;
++    key = LEPUS_UNDEFINED;
++    key_atom = JS_ATOM_NULL;
++    v = LEPUS_UNDEFINED;
++  }
++
++  LEPUS_FreeValue(ctx, iter);
++  LEPUS_FreeValue(ctx, next);
++  return groups;
++
++iterator_close_exception:
++  JS_IteratorClose(ctx, iter, TRUE);
++exception:
++  LEPUS_FreeAtom(ctx, key_atom);
++  LEPUS_FreeValue(ctx, prop);
++  LEPUS_FreeValue(ctx, key);
++  LEPUS_FreeValue(ctx, v);
++  LEPUS_FreeValue(ctx, groups);
++  LEPUS_FreeValue(ctx, iter);
++  LEPUS_FreeValue(ctx, next);
++  return LEPUS_EXCEPTION;
++}
++
+ QJS_STATIC void js_map_finalizer(LEPUSRuntime *rt, LEPUSValue val) {
+   LEPUSObject *p;
+   JSMapState *s;
+@@ -48207,6 +48340,7 @@ QJS_STATIC LEPUSValue js_map_iterator_next(LEPUSContext *ctx,
+ }
+ 
+ static const LEPUSCFunctionListEntry js_map_funcs[] = {
++    LEPUS_CFUNC_MAGIC_DEF("groupBy", 2, js_object_groupBy, 1),
+     LEPUS_CGETSET_DEF("[Symbol.species]", js_get_this, NULL),
+ };
+ 
+-- 
+2.39.5 (Apple Git-154)
+

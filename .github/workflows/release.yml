@@ -1,0 +1,100 @@
+name: Publish to NPM
+on:
+  push:
+    tags:
+      - 'v*'
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+      deployments: write
+
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          registry-url: 'https://registry.npmjs.org'
+      
+      - name: setup bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.2.9'
+
+
+      - name: Setup cmake
+        uses: jwlawson/actions-setup-cmake@802fa1a2c4e212495c05bf94dba2704a92a472be
+        with:
+          cmake-version: '4.0.x'
+
+      - name: envsetup
+        run: chmod +x tools/envsetup.sh && tools/envsetup.sh
+
+      - name: patch
+        run: chmod +x tools/patch.sh && tools/patch.sh
+
+      # the TypeScript embedder is up first
+
+      - name: install dependencies (TS)
+        working-directory: embedders/ts
+        run: |
+          # npm has a bug, nothing we can do.
+          rm -rf package-lock.json
+          npm i
+          # just until uwasi deploys a new version
+          npm run patch:deps
+
+      - name: generate builds (TS)
+        working-directory: embedders/ts
+        run: npm run generate:builds
+
+      - name: generate version (TS)
+        working-directory: embedders/ts
+        run: npm run generate:version
+
+      - name: lint (TS)
+        working-directory: embedders/ts
+        run: |
+          source ${{ github.workspace }}/tools/third-party/env.sh
+          npm run lint
+
+      - name: test (TS)
+        working-directory: embedders/ts
+        run: npm run test
+
+      - name: build (TS)
+        working-directory: embedders/ts
+        run: npm run build
+      
+      # we will publish in a bit, let's build and publish REPL
+      - name: install dependencies (REPL)
+        working-directory: examples/repl
+        run: bun install
+
+      - name: generate build (REPL)
+        working-directory: examples/repl
+        run: bun run build
+
+      - name: publish REPL to cloudflare pages
+        uses: cloudflare/pages-action@v1
+        with:
+          apiToken: ${{ secrets.PAGE_PUBLISH_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          projectName: hakorepl
+          directory: dist
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          branch: production
+          workingDirectory: examples/repl
+          wranglerVersion: '3'
+
+      #- name: Publish package to NPM
+      #  run: npm publish --provenance --access public --tag latest
+      #  env:
+      #    NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -1,0 +1,25 @@
+From 54bcdab100b5024f01eff2ca732f35a41b451241 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Mon, 7 Apr 2025 14:40:19 +0900
+Subject: [PATCH] removed memory leak in string padding
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 972a355..1dcc0a6 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -40178,7 +40178,7 @@ QJS_STATIC LEPUSValue js_string_pad(LEPUSContext *ctx, LEPUSValueConst this_val,
+   if (len >= n) return str;
+   if (n > JS_STRING_LEN_MAX) {
+     LEPUS_ThrowInternalError(ctx, "string too long");
+-    goto fail2;
++    goto fail3;
+   }
+   if (argc > 1 && !LEPUS_IsUndefined(argv[1])) {
+     v = JS_ToString_RC(ctx, argv[1]);
+-- 
+2.39.5 (Apple Git-154)
+

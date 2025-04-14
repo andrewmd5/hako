@@ -1,0 +1,27 @@
+{
+  "name": "hako-repl",
+  "version": "0.0.0",
+  "description": "A secure, embeddable JavaScript engine that runs untrusted code inside WebAssembly sandboxes with fine-grained permissions and resource limits",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rollup -c rollup.config.mjs"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@babel/preset-env": "^7.26.9",
+    "@rollup/plugin-babel": "^6.0.4",
+    "@rollup/plugin-node-resolve": "^16.0.1",
+    "@rollup/plugin-terser": "^0.4.4",
+    "@rollup/plugin-typescript": "^12.1.2",
+    "@web/rollup-plugin-html": "^2.3.0",
+    "@babel/plugin-proposal-explicit-resource-management": "^7.25.9",
+    "rollup": "^4.39.0"
+  },
+  "dependencies": {
+    "hakojs": "file:../../embedders/ts"
+  }
+}

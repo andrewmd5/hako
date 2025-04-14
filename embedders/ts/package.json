@@ -1,0 +1,73 @@
+{
+  "name": "hakojs",
+  "version": "0.0.0",
+  "description": "A secure, embeddable JavaScript engine that runs untrusted code inside WebAssembly sandboxes with fine-grained permissions and resource limits",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./biome": "./biome.json",
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node --experimental-strip-types build.ts && tsc --outDir ./dist && tsc-alias -p tsconfig.json",
+    "dev": "esbuild src/index.ts --bundle --format=esm --outdir=dist --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "format": "biome format --write",
+    "lint": "biome lint --error-on-warnings",
+    "lint:fix": "biome lint --fix",
+    "patch:deps": "patch -p1 -i patches/uwasi+1.4.0.patch",
+    "generate:version": "node --experimental-strip-types tools/update-verison.ts",
+    "generate:builds": "node --experimental-strip-types tools/generate-builds.ts"
+  },
+  "keywords": [
+    "javascript-engine",
+    "quicksjs",
+    "wasm",
+    "webassembly",
+    "sandbox",
+    "security",
+    "containerization",
+    "untrusted-code",
+    "code-execution",
+    "isolation",
+    "permissions",
+    "resource-limits",
+    "edge-functions",
+    "serverless",
+    "plugin-system",
+    "embeddable"
+  ],
+  "author": {
+    "name": "Andrew Sampson",
+    "email": "collab@andrew.im",
+    "url": "https://andrew.im"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/andrewmd5/hakojs.git"
+  },
+  "homepage": "https://hakojs.com",
+  "bugs": {
+    "url": "https://github.com/andrewmd5/hakojs/issues"
+  },
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "@types/node": "22.13.14",
+    "esbuild": "0.25.1",
+    "tsc-alias": "1.8.15",
+    "typescript": "5.8.2",
+    "vitest": "3.0.9",
+    "zx": "8.5.2"
+  },
+  "dependencies": {
+    "uwasi": "1.4.0"
+  }
+}

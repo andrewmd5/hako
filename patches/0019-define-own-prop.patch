@@ -1,0 +1,39 @@
+From 2d130f5ed084c15cc95e5b22979f7b8421e80c5e Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 8 Apr 2025 09:44:52 +0900
+Subject: [PATCH] fixed define own property with writable=false on module
+ namespace
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 4ce079a..570631d 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -9580,15 +9580,19 @@ redo_prop_update:
+                  spaces. */
+               if (!js_same_value(ctx, val, *pr->u.var_ref->pvalue))
+                 goto not_configurable;
++            } else {
++              /* update the reference */
++              set_value(ctx, pr->u.var_ref->pvalue, LEPUS_DupValue(ctx, val));
+             }
+-            /* update the reference */
+-            set_value(ctx, pr->u.var_ref->pvalue, LEPUS_DupValue(ctx, val));
+           }
+           /* if writable is set to false, no longer a
+              reference (for mapped arguments) */
+           if ((flags & (LEPUS_PROP_HAS_WRITABLE | LEPUS_PROP_WRITABLE)) ==
+               LEPUS_PROP_HAS_WRITABLE) {
+             LEPUSValue val1;
++            if (p->class_id == JS_CLASS_MODULE_NS) {
++                return JS_ThrowTypeErrorOrFalse(ctx, flags, "module namespace properties have writable = false");
++            }
+             if (js_shape_prepare_update(ctx, p, &prs)) return -1;
+             val1 = LEPUS_DupValue(ctx, *pr->u.var_ref->pvalue);
+             free_var_ref(ctx->rt, pr->u.var_ref);
+-- 
+2.39.5 (Apple Git-154)
+

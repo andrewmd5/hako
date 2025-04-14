@@ -1,0 +1,16 @@
+diff --git forkSrcPrefix/src/interpreter/quickjs/source/quickjs.cc forkDstPrefix/src/interpreter/quickjs/source/quickjs.cc
+index 15db7cc5f2518cf29e46d363ac54fa97b8378ee2..cef6d97713e8d6b27f1d204d39f1608db52851b5 100644
+--- forkSrcPrefix/src/interpreter/quickjs/source/quickjs.cc
++++ forkDstPrefix/src/interpreter/quickjs/source/quickjs.cc
+@@ -46440,7 +46440,10 @@ QJS_STATIC LEPUSValue js_proxy_get(LEPUSContext *ctx, LEPUSValueConst obj,
+   if (LEPUS_IsException(ret)) return LEPUS_EXCEPTION;
+   res = JS_GetOwnPropertyInternal(ctx, &desc, LEPUS_VALUE_GET_OBJ(s->target),
+                                   atom);
+-  if (res < 0) return LEPUS_EXCEPTION;
++  if (res < 0) {
++    LEPUS_FreeValue(ctx, ret);
++    return LEPUS_EXCEPTION;
++  }
+   if (res) {
+     if ((desc.flags & (LEPUS_PROP_GETSET | LEPUS_PROP_CONFIGURABLE |
+                        LEPUS_PROP_WRITABLE)) == 0) {

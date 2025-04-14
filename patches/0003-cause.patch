@@ -1,0 +1,60 @@
+diff --git forkSrcPrefix/src/interpreter/quickjs/source/quickjs.cc forkDstPrefix/src/interpreter/quickjs/source/quickjs.cc
+index 46fc8af837d3adfb0bdd3aec691ffcdf8567473c..0382668d2fc4ba7498144fb7e5c2d0dccf57e8b1 100644
+--- forkSrcPrefix/src/interpreter/quickjs/source/quickjs.cc
++++ forkDstPrefix/src/interpreter/quickjs/source/quickjs.cc
+@@ -36988,8 +36988,10 @@ exception:
+ 
+ LEPUSValue js_error_constructor(LEPUSContext *ctx, LEPUSValueConst new_target,
+                                 int argc, LEPUSValueConst *argv, int magic) {
+-  LEPUSValue obj, msg, proto;
++  LEPUSValue obj, msg, proto, cause;
+   LEPUSValueConst message;
++  int opts;
++  LEPUS_BOOL present;
+ 
+   if (LEPUS_IsUndefined(new_target)) new_target = JS_GetActiveFunction(ctx);
+   proto = LEPUS_GetPropertyInternal(ctx, new_target, JS_ATOM_prototype,
+@@ -37012,8 +37014,10 @@ LEPUSValue js_error_constructor(LEPUSContext *ctx, LEPUSValueConst new_target,
+   func_scope.PushHandle(&obj, HANDLE_TYPE_LEPUS_VALUE);
+   if (magic == JS_AGGREGATE_ERROR) {
+     message = argv[1];
++    opts = 2;
+   } else {
+     message = argv[0];
++    opts = 1;
+   }
+   func_scope.PushHandle(&message, HANDLE_TYPE_LEPUS_VALUE);
+   if (!LEPUS_IsUndefined(message)) {
+@@ -37023,6 +37027,20 @@ LEPUSValue js_error_constructor(LEPUSContext *ctx, LEPUSValueConst new_target,
+     LEPUS_DefinePropertyValue(ctx, obj, JS_ATOM_message, msg,
+                               LEPUS_PROP_WRITABLE | LEPUS_PROP_CONFIGURABLE);
+   }
++  if (argc > opts && LEPUS_VALUE_GET_TAG(argv[opts]) == LEPUS_TAG_OBJECT)
++  {
++    present = LEPUS_HasProperty(ctx, argv[opts], JS_ATOM_cause);
++    if (unlikely(present < 0))
++      goto exception;
++    if (present)
++    {
++      cause = LEPUS_GetProperty(ctx, argv[opts], JS_ATOM_cause);
++      if (unlikely(LEPUS_IsException(cause)))
++        goto exception;
++      LEPUS_DefinePropertyValue(ctx, obj, JS_ATOM_cause, cause,
++                                LEPUS_PROP_WRITABLE | LEPUS_PROP_CONFIGURABLE);
++    }
++  }
+ 
+   if (magic == JS_AGGREGATE_ERROR) {
+     LEPUSValue error_list = iterator_to_array(ctx, argv[0]);
+diff --git forkSrcPrefix/src/interpreter/quickjs/include/quickjs-atom.h forkDstPrefix/src/interpreter/quickjs/include/quickjs-atom.h
+index c6c6367d2a099d02128c5a8954aaf5cc2fd084c4..e4e77a9067286b8b77c2940918a4cdaf84458b9c 100644
+--- forkSrcPrefix/src/interpreter/quickjs/include/quickjs-atom.h
++++ forkDstPrefix/src/interpreter/quickjs/include/quickjs-atom.h
+@@ -85,6 +85,7 @@ DEF(length, "length")
+ DEF(fileName, "fileName")
+ DEF(lineNumber, "lineNumber")
+ DEF(message, "message")
++DEF(cause, "cause")
+ DEF(stack, "stack")
+ DEF(name, "name")
+ DEF(toString, "toString")

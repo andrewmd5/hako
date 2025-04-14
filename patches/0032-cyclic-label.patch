@@ -1,0 +1,50 @@
+From e5659c3f4bb3dfdb25a122d4227cac4298168800 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Sun, 13 Apr 2025 18:05:42 +0900
+Subject: [PATCH] fix DOS in cyclic labels
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 19 +++++++++++++++++--
+ 1 file changed, 17 insertions(+), 2 deletions(-)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 88e1eb9..fc2e64c 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -30432,9 +30432,11 @@ QJS_STATIC BOOL code_has_label(CodeContext *s, int pos, int label) {
+    the first opcode at destination is stored in *pop
+  */
+ QJS_STATIC int find_jump_target(
+-    JSFunctionDef *s, int label, int *pop,
++    JSFunctionDef *s, int label0, int *pop,
+     /* <Primjs begin> */ int64_t *pline /* <Primjs end>*/) {
+-  int i, pos, op;
++  int i, pos, op, label;
++
++  label = label0;
+ 
+   update_label(s, label, -1);
+   for (i = 0; i < 10; i++) {
+@@ -30465,6 +30467,19 @@ QJS_STATIC int find_jump_target(
+     }
+   }
+   /* cycle detected, could issue a warning */
++  /* XXX: the combination of find_jump_target() and skip_dead_code()
++       seems incorrect with cyclic labels. See for exemple:
++
++       for (;;) {
++       l:break l;
++       l:break l;
++       l:break l;
++       l:break l;
++       }
++
++       Avoiding changing the target is just a workaround and might not
++       suffice to completely fix the problem. */
++    label = label0;
+ done:
+   *pop = op;
+   update_label(s, label, +1);
+-- 
+2.39.5 (Apple Git-154)
+

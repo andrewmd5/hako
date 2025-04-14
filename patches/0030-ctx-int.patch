@@ -1,0 +1,39 @@
+From 9554862338712b307d26827a68fbe6c4792e5748 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Sun, 13 Apr 2025 17:20:22 +0900
+Subject: [PATCH] pass CTX with interrupt handler
+
+---
+ src/interpreter/quickjs/include/quickjs.h | 2 +-
+ src/interpreter/quickjs/source/quickjs.cc | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/interpreter/quickjs/include/quickjs.h b/src/interpreter/quickjs/include/quickjs.h
+index 184975b..62b1bc8 100644
+--- a/src/interpreter/quickjs/include/quickjs.h
++++ b/src/interpreter/quickjs/include/quickjs.h
+@@ -1313,7 +1313,7 @@ LEPUSValue LEPUS_PromiseResult(LEPUSContext *ctx, LEPUSValueConst promise);
+ LEPUS_BOOL LEPUS_IsPromise(LEPUSValueConst val);
+ 
+ /* return != 0 if the LEPUS code needs to be interrupted */
+-typedef int LEPUSInterruptHandler(LEPUSRuntime *rt, void *opaque);
++typedef int LEPUSInterruptHandler(LEPUSRuntime *rt, LEPUSContext *ctx, void *opaque);
+ void LEPUS_SetInterruptHandler(LEPUSRuntime *rt, LEPUSInterruptHandler *cb,
+                                void *opaque);
+ /* if can_block is TRUE, Atomics.wait() can be used */
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 7e12169..de69399 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -16342,7 +16342,7 @@ QJS_STATIC no_inline __exception int __js_poll_interrupts(LEPUSContext *ctx) {
+   LEPUSRuntime *rt = ctx->rt;
+   ctx->interrupt_counter = JS_INTERRUPT_COUNTER_INIT;
+   if (rt->interrupt_handler) {
+-    if (rt->interrupt_handler(rt, rt->interrupt_opaque)) {
++    if (rt->interrupt_handler(rt, ctx, rt->interrupt_opaque)) {
+       /* XXX: should set a specific flag to avoid catching */
+       LEPUS_ThrowInternalError(ctx, "interrupted");
+       JS_SetUncatchableError(ctx, ctx->rt->current_exception, TRUE);
+-- 
+2.39.5 (Apple Git-154)
+

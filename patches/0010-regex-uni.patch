@@ -1,0 +1,27 @@
+From b98e0092c35b853e0fde98ab3a7f9e5e8d846e3a Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Mon, 7 Apr 2025 17:02:12 +0900
+Subject: [PATCH] regexp: allow [\-] in unicode mode
+
+---
+ src/interpreter/quickjs/source/libregexp.cc | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/src/interpreter/quickjs/source/libregexp.cc b/src/interpreter/quickjs/source/libregexp.cc
+index 88f4053..fab157c 100644
+--- a/src/interpreter/quickjs/source/libregexp.cc
++++ b/src/interpreter/quickjs/source/libregexp.cc
+@@ -724,6 +724,10 @@ static int get_class_atom(REParseState *s, CharRange *cr, const uint8_t **pp,
+             c = '\\';
+           }
+           break;
++        case '-':
++          if (!inclass && s->is_utf16)
++            goto invalid_escape;
++          break;
+ #ifdef CONFIG_ALL_UNICODE
+         case 'p':
+         case 'P':
+-- 
+2.39.5 (Apple Git-154)
+

@@ -1,0 +1,25 @@
+From a22abfd893bec6e2be1a2ee11bbd30e473b97156 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 8 Apr 2025 10:09:47 +0900
+Subject: [PATCH] 'for of' expression cannot start with 'async'
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 91e71c9..e9060a8 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -25322,6 +25322,8 @@ QJS_STATIC __exception int js_parse_for_in_of(JSParseState *s, int label_name,
+       emit_atom(s, var_name);
+       emit_u16(s, fd->scope_level);
+     }
++  } else if (!is_async && token_is_pseudo_keyword(s, JS_ATOM_async) && peek_token(s, FALSE) == TOK_OF) {
++        return js_parse_error(s, "'for of' expression cannot start with 'async'");
+   } else {
+     int skip_bits;
+     if ((s->token.val == '[' || s->token.val == '{') &&
+-- 
+2.39.5 (Apple Git-154)
+

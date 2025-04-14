@@ -1,0 +1,415 @@
+From 0386fc2404a71a05a09b2d856a99671e9a02238c Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Fri, 11 Apr 2025 20:18:04 +0900
+Subject: [PATCH] profiling support
+
+enables a very basic profiler
+---
+ .../quickjs/include/quickjs-inner.h           |  17 ++
+ src/interpreter/quickjs/include/quickjs.h     |  21 +-
+ src/interpreter/quickjs/source/quickjs.cc     | 235 +++++++++++++++++-
+ 3 files changed, 268 insertions(+), 5 deletions(-)
+
+diff --git a/src/interpreter/quickjs/include/quickjs-inner.h b/src/interpreter/quickjs/include/quickjs-inner.h
+index 65824ea..645714c 100644
+--- a/src/interpreter/quickjs/include/quickjs-inner.h
++++ b/src/interpreter/quickjs/include/quickjs-inner.h
+@@ -428,6 +428,14 @@ struct LEPUSRuntime {
+   LEPUSObject *boilerplateArg2;
+   LEPUSObject *boilerplateArg3;
+ #endif
++
++#ifdef ENABLE_HAKO_PROFILER
++  ProfileEventHandler *profile_function_start;
++  ProfileEventHandler *profile_function_end;
++  void *profile_opaque;
++  uint32_t profile_sampling;
++  uint32_t profile_sample_count;
++#endif
+ };
+ 
+ #define LEPUS_INVALID_CLASS_ID 0
+@@ -1001,6 +1009,10 @@ typedef struct LEPUSFunctionBytecode {
+ 
+     CallerStrSlot *caller_slots;
+     size_t caller_size;
++#ifdef ENABLE_HAKO_PROFILER
++    /* Class.function or Object.function or just function */
++    LEPUSAtom full_func_name_cache;
++#endif
+     // end.
+   } debug;
+   // ATTENTION: NEW MEMBERS MUST BE ADDED IN FRONT OF DEBUG FIELD!
+@@ -1326,6 +1338,11 @@ struct LEPUSObject {
+       uint8_t length;
+       uint8_t cproto;
+       int16_t magic;
++      #ifdef ENABLE_HAKO_PROFILER
++      struct debug {
++        LEPUSAtom full_func_name_cache;
++      } debug;
++      #endif
+     } cfunc;
+     /* array part for fast arrays and typed arrays */
+     struct { /* JS_CLASS_ARRAY, JS_CLASS_ARGUMENTS,
+diff --git a/src/interpreter/quickjs/include/quickjs.h b/src/interpreter/quickjs/include/quickjs.h
+index 943ebf4..184975b 100644
+--- a/src/interpreter/quickjs/include/quickjs.h
++++ b/src/interpreter/quickjs/include/quickjs.h
+@@ -84,6 +84,20 @@ struct LEPUSClosureVar;
+ typedef struct LEPUSBreakpoint LEPUSBreakpoint;
+ typedef struct LEPUSScriptSource LEPUSScriptSource;
+ 
++#ifdef ENABLE_HAKO_PROFILER
++/**
++ * Callback function type for handling JavaScript profiling events.
++ *
++ * @param func        Function name as a JSAtom. May be in the format "Constructor.name"
++ *                    when the function is executed in a constructor's context (i.e.,
++ *                    with 'this' binding)
++ * @param filename    Name of the source file containing the function, as a JSAtom
++ * @param opaque_data User data that was originally passed to JS_EnableProfileCalls.
++ *                    Same value is provided to both start and end handlers
++ */
++typedef void ProfileEventHandler(LEPUSContext *ctx, JSAtom func, JSAtom filename, void *opaque_data);
++#endif
++
+ #if defined(__x86_64__) || defined(__aarch64__)
+ #define LEPUS_PTR64
+ #define LEPUS_PTR64_DEF(a) a
+@@ -704,7 +718,12 @@ void PrepareQJSDebuggerForSharedContext(LEPUSContext *ctx, void **funcs,
+                                         int32_t callback_size,
+                                         bool devtool_connect);
+ 
+-// <Primjs end>
++    // <Primjs end>
++// <Hako start>
++#ifdef ENABLE_HAKO_PROFILER
++void JS_EnableProfileCalls(LEPUSRuntime *rt, ProfileEventHandler *on_start, ProfileEventHandler *on_end, uint32_t sampling, void *opaque_data);
++#endif
++// <Hako end>
+ 
+ LEPUSRuntime *LEPUS_NewRuntime(void);
+ LEPUSRuntime *LEPUS_NewRuntimeWithMode(uint32_t mode);
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index e92b52d..7e12169 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -1231,6 +1231,18 @@ static const LEPUSMallocFunctions def_malloc_funcs = {
+ #endif
+ };
+ 
++#ifdef ENABLE_HAKO_PROFILER
++void JS_EnableProfileCalls(LEPUSRuntime *rt, ProfileEventHandler *on_start, ProfileEventHandler *on_end, uint32_t sampling, void *opaque_data)
++{
++  rt->profile_function_start = on_start;
++  rt->profile_function_end = on_end;
++  rt->profile_opaque = opaque_data;
++  // If sampling == 0, it's interpreted as "no sampling" which means we log 1/1 calls.
++  rt->profile_sampling = sampling > 0 ? sampling : 1;
++  rt->profile_sample_count = 0;
++}
++#endif
++
+ LEPUSRuntime *LEPUS_NewRuntime(void) {
+   settingsFlag = GetSettingsFlag();
+ #ifdef ENABLE_COMPATIBLE_MM
+@@ -4971,6 +4983,9 @@ QJS_STATIC LEPUSValue JS_NewCFunction3(LEPUSContext *ctx, LEPUSCFunction *func,
+                        cproto == LEPUS_CFUNC_constructor_magic ||
+                        cproto == LEPUS_CFUNC_constructor_or_func ||
+                        cproto == LEPUS_CFUNC_constructor_or_func_magic);
++  #ifdef ENABLE_HAKO_PROFILER 
++  p->u.cfunc.debug = {0}; 
++  #endif
+   if (!name) {
+     name = "";
+   }
+@@ -6932,6 +6947,133 @@ void build_backtrace_frame(LEPUSContext *ctx, LEPUSStackFrame *sf, DynBuf *dbuf,
+   dbuf_putc(dbuf, '\n');
+ }
+ 
++QJS_STATIC JSAtom get_full_func_name(LEPUSContext *ctx, LEPUSValueConst func, LEPUSValueConst this_obj) {
++    JSAtom result_atom = JS_ATOM_NULL;
++    const char *func_str = NULL;
++    const char *tag_str = NULL;
++    const char *ctor_str = NULL;
++    const char *this_obj_name = NULL;
++    LEPUSValue tag_val = LEPUS_UNDEFINED;   // Initialized to an undefined value.
++    LEPUSValue ctor = LEPUS_UNDEFINED;        // Initialized to an undefined value.
++    LEPUSValue result_val = LEPUS_UNDEFINED;    // Initialized to an undefined value.
++    StringBuffer sb;
++
++    // Declarations moved up to avoid bypassing their initialization.
++    const char *prefix = NULL;   // Determined later: See Step 3.
++    size_t prefix_len = 0;       // Length of the prefix string.
++    size_t func_len = 0;         // Length of the original function name.
++
++    // Retrieve the function's name.
++    func_str = get_func_name(ctx, func);
++  
++    if (!func_str || func_str[0] == '\0') {
++        //see what the this is
++        goto cleanup;
++    }
++
++    // Special case: if the function name equals "get [Symbol.toStringTag]",
++    // we simply return this name without further processing.
++    if (strcmp(func_str, "get [Symbol.toStringTag]") == 0) {
++        result_atom = LEPUS_NewAtom(ctx, func_str);
++        goto cleanup;
++    }
++
++    // Special case: if the function name equals "<eval>",
++    // it doesn't need any prefix, so we return it directly.
++    if (strcmp(func_str, "<eval>") == 0) {
++        result_atom = LEPUS_NewAtom(ctx, func_str);
++        goto cleanup;
++    }
++
++    // If "this_obj" isn't an object, simply return the function's name.
++    if (LEPUS_VALUE_GET_TAG(this_obj) != LEPUS_TAG_OBJECT) {
++        result_atom = LEPUS_NewAtom(ctx, func_str);
++        goto cleanup;
++    }
++
++    // Fast path: If this_obj is a function, use its name as the prefix
++    this_obj_name = get_func_name(ctx, this_obj);
++
++    if (this_obj_name && this_obj_name[0] != '\0') {
++        // Special case: if the func_name is the same as the 'this' name, 
++        // the 'this' name should become "Ctor"
++        if (func_str && strcmp(func_str, this_obj_name) == 0) {
++            prefix = "Ctor";
++        } else {
++            // Use this_obj's name as the prefix for the static function case
++            prefix = this_obj_name;
++        }
++        
++        // Skip the regular Symbol.toStringTag and constructor checks
++        goto build_result;
++    }
++
++    // --- Step 1: Check for [Symbol.toStringTag] property ---
++    // Retrieve the [Symbol.toStringTag] from the object if it exists.
++    tag_val = LEPUS_GetProperty(ctx, this_obj, JS_ATOM_Symbol_toStringTag);
++    if (!LEPUS_IsUndefined(tag_val)) {
++        tag_str = LEPUS_ToCString(ctx, tag_val);
++    }
++
++    // --- Step 2: Get the constructor name ---
++    // Retrieve the object's constructor property and then fetch its function name.
++    ctor = LEPUS_GetProperty(ctx, this_obj, JS_ATOM_constructor);
++    ctor_str = get_func_name(ctx, ctor);
++
++    // --- Step 3: Determine the prefix ---
++    // Priority order:
++    // 1. Use the [Symbol.toStringTag] if available and non-empty.
++    // 2. Otherwise, if the constructor's name is available:
++    //      - If it equals "Function", use "Ctor" as the prefix.
++    //      - Otherwise, use the constructor's name.
++    // 3. If no valid constructor name is available, default to "<unknown>".
++    if (tag_str && tag_str[0] != '\0') {
++        prefix = tag_str;
++    } else if (ctor_str && ctor_str[0] != '\0') {
++        if (strcmp(ctor_str, "Function") == 0)
++            prefix = "Ctor";
++        else
++            prefix = ctor_str;
++    } else {
++        prefix = "<unknown>";
++    }
++
++build_result:
++    // --- Step 4: Build the result string "prefix.func_str" ---
++    prefix_len = strlen(prefix);
++    func_len = strlen(func_str);
++    if (string_buffer_init2(ctx, &sb, prefix_len + 1 + func_len, 0)) {
++        goto cleanup;
++    }
++    string_buffer_write8(&sb, (const uint8_t *)prefix, prefix_len);
++    string_buffer_write8(&sb, (const uint8_t *)".", 1);
++    string_buffer_write8(&sb, (const uint8_t *)func_str, func_len);
++    result_val = string_buffer_end(&sb);
++
++    // Convert the constructed string to an atom.
++    result_atom = LEPUS_ValueToAtom(ctx, result_val);
++
++cleanup:
++    // --- Cleanup --- Ensure all resources are freed in one place.
++    if (!LEPUS_IsUndefined(result_val))
++        LEPUS_FreeValue(ctx, result_val);
++    if (func_str)
++        LEPUS_FreeCString(ctx, func_str);
++    if (ctor_str)
++        LEPUS_FreeCString(ctx, ctor_str);
++    if (tag_str)
++        LEPUS_FreeCString(ctx, tag_str);
++    if (this_obj_name)
++        LEPUS_FreeCString(ctx, this_obj_name);
++    if (!LEPUS_IsUndefined(ctor))
++        LEPUS_FreeValue(ctx, ctor);
++    if (!LEPUS_IsUndefined(tag_val))
++        LEPUS_FreeValue(ctx, tag_val);
++
++    return result_atom;
++}
++
++
+ #define JS_BACKTRACE_FLAG_SKIP_FIRST_LEVEL (1 << 0)
+ 
+ /* if filename != NULL, an additional level is added with the filename
+@@ -15957,8 +16099,12 @@ QJS_STATIC LEPUSValue js_call_c_function(LEPUSContext *ctx,
+   LEPUSValueConst *arg_buf;
+   int arg_count, i;
+   LEPUSCFunctionEnum cproto;
++#ifdef ENABLE_HAKO_PROFILER
++  const int must_sample = rt->profile_sampling && rt->profile_sample_count == 0;
++#endif
+ 
+   p = LEPUS_VALUE_GET_OBJ(func_obj);
++
+   cproto = static_cast<LEPUSCFunctionEnum>(p->u.cfunc.cproto);
+   arg_count = p->u.cfunc.length;
+ 
+@@ -15990,6 +16136,19 @@ QJS_STATIC LEPUSValue js_call_c_function(LEPUSContext *ctx,
+   sf->arg_count = argc;
+   arg_buf = argv;
+ 
++#ifdef ENABLE_HAKO_PROFILER
++  if (unlikely(must_sample))
++  {
++    if (!p->u.cfunc.debug.full_func_name_cache) {
++      p->u.cfunc.debug.full_func_name_cache = get_full_func_name(ctx, func_obj, this_obj);
++    }
++    if (likely(rt->profile_function_start))
++    {
++      rt->profile_function_start(ctx, p->u.cfunc.debug.full_func_name_cache, JS_ATOM_NULL, rt->profile_opaque);
++    }
++  }
++#endif
++
+   // <Primjs begin>
+ #ifdef OS_IOS
+   size_t alloca_size = 0;
+@@ -16020,7 +16179,7 @@ QJS_STATIC LEPUSValue js_call_c_function(LEPUSContext *ctx,
+ 
+   // <Primjs end>
+   sf->arg_buf = (LEPUSValue *)arg_buf;
+-
++  
+   func = p->u.cfunc.c_function;
+   switch (cproto) {
+     case LEPUS_CFUNC_constructor:
+@@ -16104,6 +16263,21 @@ QJS_STATIC LEPUSValue js_call_c_function(LEPUSContext *ctx,
+ #ifdef OS_IOS
+   js_pop_virtual_sp(ctx, alloca_size);
+ #endif
++
++#ifdef ENABLE_HAKO_PROFILER
++  if (unlikely(must_sample))
++  {
++    if (likely(rt->profile_function_end))
++    {
++      rt->profile_function_end(ctx, p->u.cfunc.debug.full_func_name_cache, JS_ATOM_NULL, rt->profile_opaque);
++    }
++  }
++  if (unlikely(rt->profile_sampling))
++  {
++    rt->profile_sample_count = (rt->profile_sample_count + 1) % rt->profile_sampling;
++  }
++#endif
++
+   return ret_val;
+ }
+ 
+@@ -16248,6 +16422,10 @@ QJS_STATIC LEPUSValue JS_CallInternal(LEPUSContext *caller_ctx,
+   LEPUSValue *local_buf, *stack_buf, *var_buf, *arg_buf, *sp, ret_val, *pval;
+   JSVarRef **var_refs;
+   size_t alloca_size;
++#ifdef ENABLE_HAKO_PROFILER
++  JSAtom full_func_name = JS_ATOM_NULL;
++  const int must_sample = rt->profile_sampling && rt->profile_sample_count == 0;
++#endif
+ #ifdef ENABLE_QUICKJS_DEBUGGER
+   if (caller_ctx->debugger_mode && (!rt->debugger_callbacks_.inspector_check ||
+                                     !caller_ctx->debugger_info)) {
+@@ -16343,10 +16521,34 @@ QJS_STATIC LEPUSValue JS_CallInternal(LEPUSContext *caller_ctx,
+                      (LEPUSValueConst *)argv, flags);
+   }
+   b = p->u.func.function_bytecode;
+-
+-  if (unlikely(argc < b->arg_count || (flags & JS_CALL_FLAG_COPY_ARGV))) {
++#ifdef ENABLE_HAKO_PROFILER
++  if (unlikely(must_sample))
++  {
++    if (!(b->js_mode & JS_MODE_STRICT))
++    {
++      if (!b->debug.func_name)
++      {
++          b->debug.full_func_name_cache = get_full_func_name(caller_ctx, func_obj, this_obj);
++      }
++      full_func_name = b->debug.full_func_name_cache;
++    }
++    else
++    {
++      // Even if we can't cache it, we need to compute it to report the function execution.
++      full_func_name = get_full_func_name(caller_ctx, func_obj, this_obj);
++    }
++    if (likely(rt->profile_function_start))
++    {
++      rt->profile_function_start(caller_ctx, full_func_name, b->debug.filename, rt->profile_opaque);
++    }
++  }
++#endif
++  if (unlikely(argc < b->arg_count || (flags & JS_CALL_FLAG_COPY_ARGV)))
++  {
+     arg_allocated_size = b->arg_count;
+-  } else {
++  }
++  else
++  {
+     arg_allocated_size = 0;
+   }
+ 
+@@ -18665,6 +18867,24 @@ exception:
+   if (need_free_local_buf) js_pop_virtual_sp(ctx, alloca_size);
+ #endif
+   rt->current_stack_frame = sf->prev_frame;
++#ifdef ENABLE_HAKO_PROFILER
++  if (unlikely(must_sample))
++  {
++    if (likely(rt->profile_function_end))
++    {
++      rt->profile_function_end(caller_ctx, full_func_name, b->debug.filename, rt->profile_opaque);
++    }
++    if (b->js_mode & JS_MODE_STRICT)
++    {
++      // If we weren't able to cache it, we have to free it right away (and sadly recreate it later).
++      LEPUS_FreeAtom(caller_ctx, full_func_name);
++    }
++  }
++  if (unlikely(rt->profile_sampling))
++  {
++    rt->profile_sample_count = (rt->profile_sample_count + 1) % rt->profile_sampling;
++  }
++#endif
+   return ret_val;
+ }
+ 
+@@ -31916,6 +32136,13 @@ QJS_STATIC void free_function_bytecode(LEPUSRuntime *rt,
+ #else
+     system_free(b->debug.source);
+ #endif
++
++#ifdef ENABLE_HAKO_PROFILER
++    // In STRICT js_mode, there is no "debug".
++    if (!(b->js_mode & JS_MODE_STRICT) && b->debug.full_func_name_cache != JS_ATOM_NULL) {
++          LEPUS_FreeAtomRT(rt, b->debug.full_func_name_cache);
++    }
++#endif
+   }
+   lepus_free_rt(rt, b);
+ }
+-- 
+2.39.5 (Apple Git-154)
+

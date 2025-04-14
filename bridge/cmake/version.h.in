@@ -1,0 +1,4 @@
+#ifndef HAKO_VERSION_H_
+#define HAKO_VERSION_H_
+#define HAKO_VERSION "@HAKO_VERSION@"
+#endif /* HAKO_VERSION_H_ */

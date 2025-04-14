@@ -1,0 +1,47 @@
+From 3b414e0f11b1ba7a494187e8946e0069cda315a9 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 8 Apr 2025 09:47:53 +0900
+Subject: [PATCH] Symbol.species is no longer used in TypedArray constructor
+ from a TypedArray
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 15 ++++-----------
+ 1 file changed, 4 insertions(+), 11 deletions(-)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 570631d..c4e39dc 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -54534,7 +54534,7 @@ QJS_STATIC LEPUSValue js_typed_array_constructor_ta(LEPUSContext *ctx,
+                                                     int classid) {
+   LEPUSObject *p, *src_buffer;
+   JSTypedArray *ta;
+-  LEPUSValue ctor, obj, buffer;
++  LEPUSValue obj, buffer;
+   uint32_t len, i;
+   int size_log2;
+   JSArrayBuffer *src_abuf, *abuf;
+@@ -54550,17 +54550,10 @@ QJS_STATIC LEPUSValue js_typed_array_constructor_ta(LEPUSContext *ctx,
+   len = p->u.array.count;
+   src_buffer = ta->buffer;
+   src_abuf = src_buffer->u.array_buffer;
+-  if (!src_abuf->shared) {
+-    ctor = JS_SpeciesConstructor(ctx, LEPUS_MKPTR(LEPUS_TAG_OBJECT, src_buffer),
+-                                 LEPUS_UNDEFINED);
+-    if (LEPUS_IsException(ctor)) goto fail;
+-  } else {
+-    /* force ArrayBuffer default constructor */
+-    ctor = LEPUS_UNDEFINED;
+-  }
++
+   size_log2 = typed_array_size_log2(classid);
+-  buffer = js_array_buffer_constructor1(ctx, ctor, (uint64_t)len << size_log2);
+-  LEPUS_FreeValue(ctx, ctor);
++  buffer = js_array_buffer_constructor1(ctx, LEPUS_UNDEFINED, (uint64_t)len << size_log2);
++
+   if (LEPUS_IsException(buffer)) goto fail;
+   /* necessary because it could have been detached */
+   if (typed_array_is_detached(ctx, p)) {
+-- 
+2.39.5 (Apple Git-154)
+

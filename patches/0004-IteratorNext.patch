@@ -1,0 +1,44 @@
+diff --git forkSrcPrefix/src/interpreter/quickjs/source/quickjs.cc forkDstPrefix/src/interpreter/quickjs/source/quickjs.cc
+index 0382668d2fc4ba7498144fb7e5c2d0dccf57e8b1..15db7cc5f2518cf29e46d363ac54fa97b8378ee2 100644
+--- forkSrcPrefix/src/interpreter/quickjs/source/quickjs.cc
++++ forkDstPrefix/src/interpreter/quickjs/source/quickjs.cc
+@@ -15121,9 +15121,13 @@ LEPUSValue JS_IteratorNext(LEPUSContext *ctx, LEPUSValueConst enum_obj,
+ 
+   obj = JS_IteratorNext2(ctx, enum_obj, method, argc, argv, &done);
+   if (LEPUS_IsException(obj)) goto fail;
+-  if (done != 2) {
+-    *pdone = done;
++  if (likely(done == 0)) {
++    *pdone = FALSE;
+     return obj;
++  } else if (done != 2) {
++    LEPUS_FreeValue(ctx, obj);
++    *pdone = TRUE;
++    return LEPUS_UNDEFINED;
+   } else {
+     done_val = LEPUS_GetPropertyInternal(ctx, obj, JS_ATOM_done, obj, 0);
+     if (LEPUS_IsException(done_val)) goto fail;
+@@ -36099,7 +36103,6 @@ QJS_STATIC LEPUSValue js_object_fromEntries(LEPUSContext *ctx,
+     item = JS_IteratorNext(ctx, iter, next_method, 0, NULL, &done);
+     if (LEPUS_IsException(item)) goto fail;
+     if (done) {
+-      LEPUS_FreeValue(ctx, item);
+       break;
+     }
+ 
+@@ -47284,7 +47287,6 @@ QJS_STATIC LEPUSValue js_map_constructor(LEPUSContext *ctx,
+       item = JS_IteratorNext(ctx, iter, next_method, 0, NULL, &done);
+       if (LEPUS_IsException(item)) goto fail;
+       if (done) {
+-        LEPUS_FreeValue(ctx, item);
+         break;
+       }
+       if (is_set) {
+@@ -53680,7 +53682,6 @@ QJS_STATIC LEPUSValue js_array_from_iterator(LEPUSContext *ctx, uint32_t *plen,
+     val = JS_IteratorNext(ctx, iter, next_method, 0, NULL, &done);
+     if (LEPUS_IsException(val)) goto fail;
+     if (done) {
+-      LEPUS_FreeValue(ctx, val);
+       break;
+     }
+     if (JS_CreateDataPropertyUint32(ctx, arr, k, val, LEPUS_PROP_THROW) < 0)

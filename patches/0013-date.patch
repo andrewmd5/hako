@@ -1,0 +1,1157 @@
+From f8b471df5fa3f6b5e1f67e298f6f36b5cff9ee53 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Mon, 7 Apr 2025 20:55:18 +0900
+Subject: [PATCH] Date fixes
+
+Gets 'Date' working to spec
+---
+ src/interpreter/quickjs/include/cutils.h      |   6 +
+ .../quickjs/include/quickjs-inner.h           |   2 +-
+ src/interpreter/quickjs/include/quickjs.h     |   2 +-
+ src/interpreter/quickjs/source/quickjs.cc     | 953 +++++++++++++-----
+ 4 files changed, 723 insertions(+), 240 deletions(-)
+
+diff --git a/src/interpreter/quickjs/include/cutils.h b/src/interpreter/quickjs/include/cutils.h
+index c744316..581544f 100644
+--- a/src/interpreter/quickjs/include/cutils.h
++++ b/src/interpreter/quickjs/include/cutils.h
+@@ -62,6 +62,12 @@
+ #endif
+ #endif
+ 
++#if !defined(_MSC_VER) && defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
++#define minimum_length(n) static n
++#else
++#define minimum_length(n) n
++#endif
++
+ typedef int BOOL;
+ 
+ #ifndef FALSE
+diff --git a/src/interpreter/quickjs/include/quickjs-inner.h b/src/interpreter/quickjs/include/quickjs-inner.h
+index 0cdce40..b6c2696 100644
+--- a/src/interpreter/quickjs/include/quickjs-inner.h
++++ b/src/interpreter/quickjs/include/quickjs-inner.h
+@@ -87,7 +87,7 @@ typedef int BOOL;
+ #if defined(CONFIG_BIGNUM) and defined(ENABLE_LEPUSNG)
+ #error bignum and lepusng are now conflict!
+ #endif
+-#if defined(QJS_UNITTEST) || defined(__WASI_SDK__)
++#if defined(QJS_UNITTEST)
+ #define QJS_STATIC
+ #else
+ #define QJS_STATIC static
+diff --git a/src/interpreter/quickjs/include/quickjs.h b/src/interpreter/quickjs/include/quickjs.h
+index 3e992dc..943ebf4 100644
+--- a/src/interpreter/quickjs/include/quickjs.h
++++ b/src/interpreter/quickjs/include/quickjs.h
+@@ -1081,7 +1081,7 @@ LEPUS_BOOL LEPUS_SetConstructorBit(LEPUSContext *ctx, LEPUSValueConst func_obj,
+ 
+ LEPUSValue LEPUS_NewArray(LEPUSContext *ctx);
+ int LEPUS_IsArray(LEPUSContext *ctx, LEPUSValueConst val);
+-
++LEPUSValue LEPUS_NewDate(LEPUSContext *ctx, double epoch_ms);
+ LEPUSValue LEPUS_GetPropertyInternal(LEPUSContext *ctx, LEPUSValueConst obj,
+                                      JSAtom prop, LEPUSValueConst receiver,
+                                      LEPUS_BOOL throw_ref_error);
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 67bbc73..c0ef2e4 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -11500,27 +11500,40 @@ static LEPUSValue js_ftoa(LEPUSContext *ctx, LEPUSValueConst val1, int radix,
+ #else /* !CONFIG_BIGNUM */
+ 
+ /* 2 <= base <= 36 */
+-QJS_STATIC char *i64toa(char *buf_end, int64_t n, unsigned int base) {
+-  char *q = buf_end;
+-  int digit, is_neg;
++QJS_STATIC const char digits[36] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
++                           'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j',
++                           'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't',
++                           'u', 'v', 'w', 'x', 'y', 'z'};
+ 
+-  is_neg = 0;
+-  if (n < 0) {
+-    is_neg = 1;
+-    n = -n;
+-  }
+-  *--q = '\0';
+-  do {
+-    digit = (uint64_t)n % base;
+-    n = (uint64_t)n / base;
+-    if (digit < 10)
+-      digit += '0';
+-    else
+-      digit += 'a' - 10;
+-    *--q = digit;
+-  } while (n != 0);
+-  if (is_neg) *--q = '-';
+-  return q;
++/* 2 <= base <= 36 */
++static char *i64toa(char *buf_end, int64_t n, unsigned int base)
++{
++    char *q = buf_end;
++    int digit, is_neg;
++
++    is_neg = 0;
++    if (n < 0) {
++        is_neg = 1;
++        n = -n;
++    }
++    *--q = '\0';
++    if (base == 10) {
++        /* division by known base uses multiplication */
++        do {
++            digit = (uint64_t)n % 10;
++            n = (uint64_t)n / 10;
++            *--q = '0' + digit;
++        } while (n != 0);
++    } else {
++        do {
++            digit = (uint64_t)n % base;
++            n = (uint64_t)n / base;
++            *--q = digits[digit];
++        } while (n != 0);
++    }
++    if (is_neg)
++        *--q = '-';
++    return q;
+ }
+ 
+ /* buf1 contains the printf result */
+@@ -11763,6 +11776,91 @@ QJS_STATIC LEPUSValue js_dtoa(LEPUSContext *ctx, double d, int radix,
+ 
+ #endif /* !CONFIG_BIGNUM */
+ 
++static LEPUSValue js_dtoa_radix(LEPUSContext *ctx, double d, int radix)
++{
++  char buf[2200], *ptr, *ptr2;
++  /* d is finite */
++  int sign = d < 0;
++  int digit;
++  double frac, d0;
++  int64_t n0 = 0;
++  d = fabs(d);
++  d0 = trunc(d);
++  frac = d - d0;
++  ptr = buf + 1100;
++  *ptr = '\0';
++  if (d0 <= MAX_SAFE_INTEGER)
++  {
++    int64_t n = n0 = (int64_t)d0;
++    while (n >= radix)
++    {
++      digit = n % radix;
++      n = n / radix;
++      *--ptr = digits[digit];
++    }
++    *--ptr = digits[(int)n];
++  }
++  else
++  {
++    /* no decimals */
++    while (d0 >= radix)
++    {
++      digit = fmod(d0, radix);
++      d0 = trunc(d0 / radix);
++      if (d0 >= MAX_SAFE_INTEGER)
++        digit = 0;
++      *--ptr = digits[digit];
++    }
++    *--ptr = digits[(int)d0];
++    goto done;
++  }
++  if (frac != 0)
++  {
++    double log2_radix = log2(radix);
++    double prec = 1023 + 51; // handle subnormals
++    ptr2 = buf + 1100;
++    *ptr2++ = '.';
++    while (frac != 0 && n0 <= MAX_SAFE_INTEGER / 2 && prec > 0)
++    {
++      frac *= radix;
++      digit = trunc(frac);
++      frac -= digit;
++      *ptr2++ = digits[digit];
++      n0 = n0 * radix + digit;
++      prec -= log2_radix;
++    }
++    *ptr2 = '\0';
++    if (frac * radix >= radix / 2)
++    {
++      char nine = digits[radix - 1];
++      // round to closest
++      while (ptr2[-1] == nine)
++        *--ptr2 = '\0';
++      if (ptr2[-1] == '.')
++      {
++        *--ptr2 = '\0';
++        while (ptr2[-1] == nine)
++          *--ptr2 = '0';
++      }
++      if (ptr2 - 1 == ptr)
++        *--ptr = '1';
++      else
++        ptr2[-1] += 1;
++    }
++    else
++    {
++      while (ptr2[-1] == '0')
++        *--ptr2 = '\0';
++      if (ptr2[-1] == '.')
++        *--ptr2 = '\0';
++    }
++  }
++done:
++  ptr[-1] = '-';
++  ptr -= sign;
++  return LEPUS_NewString(ctx, ptr);
++}
++
+ QJS_STATIC LEPUSValue JS_ToStringInternal(LEPUSContext *ctx,
+                                           LEPUSValueConst val,
+                                           BOOL is_ToPropertyKey) {
+@@ -38924,7 +39022,15 @@ QJS_STATIC LEPUSValue js_number_toString(LEPUSContext *ctx,
+ #else
+   {
+     double d;
++     if (LEPUS_VALUE_GET_TAG(val) == LEPUS_TAG_INT) {
++        char buf1[70], *ptr;
++        ptr = i64toa(buf1 + sizeof(buf1), LEPUS_VALUE_GET_INT(val), base);
++        return LEPUS_NewString(ctx, ptr);
++    }
+     if (JS_ToFloat64Free(ctx, &d, val)) return LEPUS_EXCEPTION;
++    if (base != 10 && isfinite(d)) {
++        return js_dtoa_radix(ctx, d, base);
++    }
+     return js_dtoa(ctx, d, base, 0, JS_DTOA_VAR_FORMAT);
+   }
+ #endif
+@@ -41265,12 +41371,16 @@ QJS_STATIC double js_math_fround(double a) { return (float)a; }
+ 
+ QJS_STATIC LEPUSValue js_math_imul(LEPUSContext *ctx, LEPUSValueConst this_val,
+                                    int argc, LEPUSValueConst *argv) {
+-  int a, b;
++  uint32_t a, b, c;
++  int32_t d;
+ 
+-  if (LEPUS_ToInt32(ctx, &a, argv[0])) return LEPUS_EXCEPTION;
+-  if (LEPUS_ToInt32(ctx, &b, argv[1])) return LEPUS_EXCEPTION;
+-  /* purposely ignoring overflow */
+-  return LEPUS_NewInt32(ctx, a * b);
++  if (LEPUS_ToUint32(ctx, &a, argv[0]))
++        return LEPUS_EXCEPTION;
++    if (LEPUS_ToUint32(ctx, &b, argv[1]))
++        return LEPUS_EXCEPTION;
++    c = a * b;
++    memcpy(&d, &c, sizeof(d));
++    return LEPUS_NewInt32(ctx, d);
+ }
+ 
+ QJS_STATIC LEPUSValue js_math_clz32(LEPUSContext *ctx, LEPUSValueConst this_val,
+@@ -50218,21 +50328,26 @@ static int const month_days[] = {31, 28, 31, 30, 31, 30,
+ static char const month_names[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
+ static char const day_names[] = "SunMonTueWedThuFriSat";
+ 
+-QJS_STATIC __exception int get_date_fields(LEPUSContext *ctx,
+-                                           LEPUSValueConst obj,
+-                                           double fields[9], int is_local,
+-                                           int force) {
++QJS_STATIC __exception int get_date_fields(LEPUSContext *ctx, LEPUSValueConst obj,
++                                           double fields[minimum_length(9)], int is_local, int force)
++{
+   double dval;
+   int64_t d, days, wd, y, i, md, h, m, s, ms, tz = 0;
+ 
+-  if (JS_ThisTimeValue(ctx, &dval, obj)) return -1;
++  if (JS_ThisTimeValue(ctx, &dval, obj))
++    return -1;
+ 
+-  if (isnan(dval)) {
+-    if (!force) return FALSE; /* NaN */
+-    d = 0;                    /* initialize all fields to 0 */
+-  } else {
+-    d = dval;
+-    if (is_local) {
++  if (isnan(dval))
++  {
++    if (!force)
++      return FALSE; /* NaN */
++    d = 0;          /* initialize all fields to 0 */
++  }
++  else
++  {
++    d = dval; /* assuming -8.64e15 <= dval <= -8.64e15 */
++    if (is_local)
++    {
+       tz = -getTimezoneOffset(d);
+       d += tz * 60000;
+     }
+@@ -50250,10 +50365,13 @@ QJS_STATIC __exception int get_date_fields(LEPUSContext *ctx,
+   wd = math_mod(days + 4, 7); /* week day */
+   y = year_from_days(&days);
+ 
+-  for (i = 0; i < 11; i++) {
++  for (i = 0; i < 11; i++)
++  {
+     md = month_days[i];
+-    if (i == 1) md += days_in_year(y) - 365;
+-    if (days < md) break;
++    if (i == 1)
++      md += days_in_year(y) - 365;
++    if (days < md)
++      break;
+     days -= md;
+   }
+   fields[0] = y;
+@@ -50275,30 +50393,67 @@ QJS_STATIC double time_clip(double t) {
+     return LEPUS_FLOAT64_NAN;
+ }
+ 
+-QJS_STATIC double set_date_fields(double fields[], int is_local,
+-                                  int dst_mode = 0) {
+-  int64_t y;
+-  double days, h, m1;
+-  volatile double d; /* enforce evaluation order */
+-  int i, m, md;
++/* The spec mandates the use of 'double' and it specifies the order
++   of the operations */
++QJS_STATIC double set_date_fields(double fields[minimum_length(7)], int is_local)
++{
++  double y, m, dt, ym, mn, day, h, s, milli, time, tv;
++  int yi, mi, i;
++  int64_t days;
++  volatile double temp; /* enforce evaluation order */
+ 
+-  m1 = fields[1];
+-  m = fmod(m1, 12);
+-  if (m < 0) m += 12;
+-  y = (int64_t)(fields[0] + floor(m1 / 12));
+-  days = days_from_year(y);
++  /* emulate 21.4.1.15 MakeDay ( year, month, date ) */
++  y = fields[0];
++  m = fields[1];
++  dt = fields[2];
++  ym = y + floor(m / 12);
++  mn = fmod(m, 12);
++  if (mn < 0)
++    mn += 12;
++  if (ym < -271821 || ym > 275760)
++    return NAN;
++
++  yi = ym;
++  mi = mn;
++  days = days_from_year(yi);
++  for (i = 0; i < mi; i++)
++  {
++    days += month_days[i];
++    if (i == 1)
++      days += days_in_year(yi) - 365;
++  }
++  day = days + dt - 1;
+ 
+-  for (i = 0; i < m; i++) {
+-    md = month_days[i];
+-    if (i == 1) md += days_in_year(y) - 365;
+-    days += md;
++  /* emulate 21.4.1.14 MakeTime ( hour, min, sec, ms ) */
++  h = fields[3];
++  m = fields[4];
++  s = fields[5];
++  milli = fields[6];
++  /* Use a volatile intermediary variable to ensure order of evaluation
++   * as specified in ECMA. This fixes a test262 error on
++   * test262/test/built-ins/Date/UTC/fp-evaluation-order.js.
++   * Without the volatile qualifier, the compile can generate code
++   * that performs the computation in a different order or with instructions
++   * that produce a different result such as FMA (float multiply and add).
++   */
++  time = h * 3600000;
++  time += (temp = m * 60000);
++  time += (temp = s * 1000);
++  time += milli;
++
++  /* emulate 21.4.1.16 MakeDate ( day, time ) */
++  tv = (temp = day * 86400000) + time; /* prevent generation of FMA */
++  if (!isfinite(tv))
++    return NAN;
++
++  /* adjust for local time and clip */
++  if (is_local)
++  {
++    int64_t ti = tv < INT64_MIN ? INT64_MIN : tv >= 0x1p63 ? INT64_MAX
++                                                           : (int64_t)tv;
++    tv += getTimezoneOffset(ti) * 60000;
+   }
+-  days += fields[2] - 1;
+-  h = fields[3] * 3600000 + fields[4] * 60000 + fields[5] * 1000 + fields[6];
+-  d = days * 86400000;
+-  d += h;
+-  if (is_local) d += getTimezoneOffset(d, dst_mode) * 60000;
+-  return time_clip(d);
++  return time_clip(tv);
+ }
+ 
+ QJS_STATIC LEPUSValue get_date_field(LEPUSContext *ctx,
+@@ -50535,226 +50690,539 @@ has_val:
+ 
+ QJS_STATIC LEPUSValue js_Date_UTC(LEPUSContext *ctx, LEPUSValueConst this_val,
+                                   int argc, LEPUSValueConst *argv) {
+-  // UTC(y, mon, d, h, m, s, ms)
+-  double fields[] = {0, 0, 1, 0, 0, 0, 0};
+-  int i, n;
+-  double a;
++    // UTC(y, mon, d, h, m, s, ms)
++    double fields[] = { 0, 0, 1, 0, 0, 0, 0 };
++    int i, n;
++    double a;
++
++    n = argc;
++    if (n == 0)
++        return LEPUS_NAN;
++    if (n > 7)
++        n = 7;
++    for(i = 0; i < n; i++) {
++        if (LEPUS_ToFloat64(ctx, &a, argv[i]))
++            return LEPUS_EXCEPTION;
++        if (!isfinite(a))
++          return LEPUS_NAN;
++        fields[i] = trunc(a);
++        if (i == 0 && fields[0] >= 0 && fields[0] < 100)
++            fields[0] += 1900;
++    }
++     return LEPUS_NewFloat64(ctx, set_date_fields(fields, 0));
++}
+ 
+-  n = argc;
+-  if (n == 0) return LEPUS_NAN;
+-  if (n > 7) n = 7;
+-  for (i = 0; i < n; i++) {
+-    if (LEPUS_ToFloat64(ctx, &a, argv[i])) return LEPUS_EXCEPTION;
+-    if (!isfinite(a)) return LEPUS_NAN;
+-    fields[i] = trunc(a);
+-    if (i == 0 && fields[0] >= 0 && fields[0] < 100) fields[0] += 1900;
+-  }
+-  return LEPUS_NewFloat64(ctx, set_date_fields(fields, 0));
++/* Date string parsing */
++
++QJS_STATIC BOOL string_skip_char(const uint8_t *sp, int *pp, int c) {
++    if (sp[*pp] == c) {
++        *pp += 1;
++        return TRUE;
++    } else {
++        return FALSE;
++    }
+ }
+ 
+-QJS_STATIC void string_skip_spaces(JSString *sp, int *pp) {
+-  while (*pp < sp->len && string_get(sp, *pp) == ' ') *pp += 1;
++/* skip spaces, update offset, return next char */
++QJS_STATIC int string_skip_spaces(const uint8_t *sp, int *pp) {
++    int c;
++    while ((c = sp[*pp]) == ' ')
++        *pp += 1;
++    return c;
+ }
+ 
+-QJS_STATIC void string_skip_non_spaces(JSString *sp, int *pp) {
+-  while (*pp < sp->len && string_get(sp, *pp) != ' ') *pp += 1;
++/* skip dashes dots and commas */
++QJS_STATIC int string_skip_separators(const uint8_t *sp, int *pp) {
++    int c;
++    while ((c = sp[*pp]) == '-' || c == '/' || c == '.' || c == ',')
++        *pp += 1;
++    return c;
+ }
+ 
+-/* parse a numeric field */
+-QJS_STATIC int string_get_field(JSString *sp, int *pp, int64_t *pval) {
+-  int64_t v = 0;
+-  int c, p = *pp;
++/* skip a word, stop on spaces, digits and separators, update offset */
++QJS_STATIC int string_skip_until(const uint8_t *sp, int *pp, const char *stoplist) {
++    int c;
++    while (!strchr(stoplist, c = sp[*pp]))
++        *pp += 1;
++    return c;
++}
+ 
+-  /* skip non digits, should only skip spaces? */
+-  while (p < sp->len) {
+-    c = string_get(sp, p);
+-    if (c >= '0' && c <= '9') break;
+-    p++;
+-  }
+-  if (p >= sp->len) return -1;
+-  while (p < sp->len) {
+-    c = string_get(sp, p);
+-    if (!(c >= '0' && c <= '9')) break;
+-    v = v * 10 + c - '0';
+-    p++;
+-  }
+-  *pval = v;
+-  *pp = p;
+-  return 0;
++/* parse a numeric field (max_digits = 0 -> no maximum) */
++QJS_STATIC BOOL string_get_digits(const uint8_t *sp, int *pp, int *pval,
++                                  int min_digits, int max_digits)
++{
++    int v = 0;
++    int c, p = *pp, p_start;
++
++    p_start = p;
++    while ((c = sp[p]) >= '0' && c <= '9') {
++        /* arbitrary limit to 9 digits */
++        if (v >= 100000000) return FALSE;
++        v = v * 10 + c - '0';
++        p++;
++        if (p - p_start == max_digits)
++            break;
++    }
++    if (p - p_start < min_digits)
++        return FALSE;
++    *pval = v;
++    *pp = p;
++    return TRUE;
+ }
+ 
+-/* parse a fixed width numeric field */
+-QJS_STATIC int string_get_digits(JSString *sp, int *pp, int n, int64_t *pval) {
+-  int64_t v = 0;
+-  int i, c, p = *pp;
++QJS_STATIC BOOL string_get_milliseconds(const uint8_t *sp, int *pp, int *pval) {
++    /* parse optional fractional part as milliseconds and truncate. */
++    /* spec does not indicate which rounding should be used */
++    int mul = 100, ms = 0, c, p_start, p = *pp;
+ 
+-  for (i = 0; i < n; i++) {
+-    if (p >= sp->len) return -1;
+-    c = string_get(sp, p);
+-    if (!(c >= '0' && c <= '9')) return -1;
+-    v = v * 10 + c - '0';
+-    p++;
+-  }
+-  *pval = v;
+-  *pp = p;
+-  return 0;
++    c = sp[p];
++    if (c == '.' || c == ',') {
++        p++;
++        p_start = p;
++        while ((c = sp[p]) >= '0' && c <= '9') {
++          ms += (c - '0') * mul;
++          mul /= 10;
++          p++;
++          if (p - p_start == 9)
++            break;
++        }
++        if (p > p_start) {
++            /* only consume the separator if digits are present */
++            *pval = ms;
++            *pp = p;
++        }
++    }
++    return TRUE;
+ }
+ 
+-/* parse a signed numeric field */
+-QJS_STATIC int string_get_signed_field(JSString *sp, int *pp, int64_t *pval) {
+-  int sgn, res;
++QJS_STATIC uint8_t upper_ascii(uint8_t c)
++{
++  return c >= 'a' && c <= 'z' ? c - 'a' + 'Z' : c;
++}
+ 
+-  if (*pp >= sp->len) return -1;
++QJS_STATIC BOOL string_get_tzoffset(const uint8_t *sp, int *pp, int *tzp, BOOL strict)
++{
++  int tz = 0, sgn, hh, mm, p = *pp;
++
++  sgn = sp[p++];
++  if (sgn == '+' || sgn == '-')
++  {
++    int n = p;
++    if (!string_get_digits(sp, &p, &hh, 1, 0))
++      return FALSE;
++    n = p - n;
++    if (strict && n != 2 && n != 4)
++      return FALSE;
++    while (n > 4)
++    {
++      n -= 2;
++      hh /= 100;
++    }
++    if (n > 2)
++    {
++      mm = hh % 100;
++      hh = hh / 100;
++    }
++    else
++    {
++      mm = 0;
++      if (string_skip_char(sp, &p, ':') /* optional separator */
++          && !string_get_digits(sp, &p, &mm, 2, 2))
++        return FALSE;
++    }
++    if (hh > 23 || mm > 59)
++      return FALSE;
++    tz = hh * 60 + mm;
++    if (sgn != '+')
++      tz = -tz;
++  }
++  else if (sgn != 'Z')
++  {
++    return FALSE;
++  }
++  *pp = p;
++  *tzp = tz;
++  return TRUE;
++}
+ 
+-  sgn = string_get(sp, *pp);
+-  if (sgn == '-' || sgn == '+') *pp += 1;
+ 
+-  res = string_get_field(sp, pp, pval);
+-  if (res == 0 && sgn == '-') *pval = -*pval;
+-  return res;
++QJS_STATIC BOOL string_match(const uint8_t *sp, int *pp, const char *s) {
++    int p = *pp;
++    while (*s != '\0') {
++        if (upper_ascii(sp[p]) != upper_ascii(*s++))
++            return FALSE;
++        p++;
++    }
++    *pp = p;
++    return TRUE;
+ }
+ 
+-QJS_STATIC int find_abbrev(JSString *sp, int p, const char *list, int count) {
++QJS_STATIC int find_abbrev(const uint8_t *sp, int p, const char *list, int count)
++{
+   int n, i;
+ 
+-  if (p + 3 <= sp->len) {
+-    for (n = 0; n < count; n++) {
+-      for (i = 0; i < 3; i++) {
+-        if (string_get(sp, p + i) != month_names[n * 3 + i]) goto next;
+-      }
+-      return n;
+-    next:;
++  for (n = 0; n < count; n++)
++  {
++    for (i = 0;; i++)
++    {
++      if (upper_ascii(sp[p + i]) != upper_ascii(list[n * 3 + i]))
++        break;
++      if (i == 2)
++        return n;
+     }
+   }
+   return -1;
+ }
+ 
+-QJS_STATIC int string_get_month(JSString *sp, int *pp, int64_t *pval) {
++QJS_STATIC BOOL string_get_month(const uint8_t *sp, int *pp, int *pval)
++{
+   int n;
+ 
+-  string_skip_spaces(sp, pp);
+   n = find_abbrev(sp, *pp, month_names, 12);
+-  if (n < 0) return -1;
++  if (n < 0)
++    return FALSE;
+ 
+-  *pval = n;
++  *pval = n + 1;
+   *pp += 3;
+-  return 0;
++  return TRUE;
+ }
+ 
+-QJS_STATIC LEPUSValue js_Date_parse(LEPUSContext *ctx, LEPUSValueConst this_val,
+-                                    int argc, LEPUSValueConst *argv) {
+-  // parse(s)
+-  LEPUSValue s, rv;
+-  int64_t fields[] = {0, 1, 1, 0, 0, 0, 0};
+-  double fields1[7];
+-  int64_t tz, hh, mm;
+-  double d;
+-  int p, i, c, sgn;
+-  JSString *sp;
+-  BOOL is_local = FALSE;  //  date-time forms are interpreted as a local time
+-
+-  rv = LEPUS_NAN;
+-
+-  struct tm info {};
+-  time_t t;
+-  int dst_mode = 0;
++/* parse toISOString format */
++QJS_STATIC BOOL js_date_parse_isostring(const uint8_t *sp, int fields[9], BOOL *is_local)
++{
++  int sgn, i, p = 0;
+ 
+-  s = JS_ToString_RC(ctx, argv[0]);
+-  if (LEPUS_IsException(s)) return LEPUS_EXCEPTION;
++  /* initialize fields to the beginning of the Epoch */
++  for (i = 0; i < 9; i++)
++  {
++    fields[i] = (i == 2);
++  }
++  *is_local = FALSE;
+ 
+-  sp = LEPUS_VALUE_GET_STRING(s);
+-  p = 0;
+-  if (p < sp->len &&
+-      (((c = string_get(sp, p)) >= '0' && c <= '9') || c == '+' || c == '-')) {
+-    /* ISO format */
+-    /* year field can be negative */
+-    /* XXX: could be stricter */
+-    if (string_get_signed_field(sp, &p, &fields[0])) goto done;
+-
+-    for (i = 1; i < 6; i++) {
+-      if (string_get_field(sp, &p, &fields[i])) break;
+-    }
+-    is_local = (i > 3);  // more than 3 fields -> date-time form
+-    if (i == 6 && p < sp->len && string_get(sp, p) == '.') {
+-      /* parse milliseconds as a fractional part, round to nearest */
+-      /* XXX: the spec does not indicate which rounding should be used */
+-      int mul = 1000, ms = 0;
+-      while (++p < sp->len) {
+-        int c = string_get(sp, p);
+-        if (!(c >= '0' && c <= '9')) break;
+-        if (mul == 1 && c >= '5') ms += 1;
+-        ms += (c - '0') * (mul /= 10);
+-      }
+-      fields[6] = ms;
++  /* year is either yyyy digits or [+-]yyyyyy */
++  sgn = sp[p];
++  if (sgn == '-' || sgn == '+')
++  {
++    p++;
++    if (!string_get_digits(sp, &p, &fields[0], 6, 6))
++      return FALSE;
++    if (sgn == '-')
++    {
++      if (fields[0] == 0)
++        return FALSE; // reject -000000
++      fields[0] = -fields[0];
+     }
++  }
++  else
++  {
++    if (!string_get_digits(sp, &p, &fields[0], 4, 4))
++      return FALSE;
++  }
++  if (string_skip_char(sp, &p, '-'))
++  {
++    if (!string_get_digits(sp, &p, &fields[1], 2, 2)) /* month */
++      return FALSE;
++    if (fields[1] < 1)
++      return FALSE;
+     fields[1] -= 1;
+-
+-    /* parse the time zone offset if present: [+-]HH:mm */
+-    tz = 0;
+-    if (p < sp->len &&
+-        ((sgn = string_get(sp, p)) == '+' || sgn == '-' || sgn == 'Z')) {
+-      if (sgn != 'Z') {
+-        if (string_get_field(sp, &p, &hh)) goto done;
+-        if (string_get_field(sp, &p, &mm)) goto done;
+-        tz = hh * 60 + mm;
+-        if (sgn == '-') tz = -tz;
+-      }
+-      is_local = FALSE;  // UTC offset representation, use offset
+-    }
+-  } else {
+-    /* toString or toUTCString format */
+-    /* skip the day of the week */
+-    string_skip_non_spaces(sp, &p);
+-    string_skip_spaces(sp, &p);
+-    if (p >= sp->len) goto done;
+-    c = string_get(sp, p);
+-    if (c >= '0' && c <= '9') {
+-      /* day of month first */
+-      if (string_get_field(sp, &p, &fields[2])) goto done;
+-      if (string_get_month(sp, &p, &fields[1])) goto done;
+-    } else {
+-      /* month first */
+-      if (string_get_month(sp, &p, &fields[1])) goto done;
+-      if (string_get_field(sp, &p, &fields[2])) goto done;
++    if (string_skip_char(sp, &p, '-'))
++    {
++      if (!string_get_digits(sp, &p, &fields[2], 2, 2)) /* day */
++        return FALSE;
++      if (fields[2] < 1)
++        return FALSE;
++    }
++  }
++  if (string_skip_char(sp, &p, 'T'))
++  {
++    *is_local = TRUE;
++    if (!string_get_digits(sp, &p, &fields[3], 2, 2) /* hour */
++        || !string_skip_char(sp, &p, ':') || !string_get_digits(sp, &p, &fields[4], 2, 2))
++    {                  /* minute */
++      fields[3] = 100; // reject unconditionally
++      return TRUE;
+     }
+-    string_skip_spaces(sp, &p);
+-    if (string_get_signed_field(sp, &p, &fields[0])) goto done;
++    if (string_skip_char(sp, &p, ':'))
++    {
++      if (!string_get_digits(sp, &p, &fields[5], 2, 2)) /* second */
++        return FALSE;
++      string_get_milliseconds(sp, &p, &fields[6]);
++    }
++  }
++  /* parse the time zone offset if present: [+-]HH:mm or [+-]HHmm */
++  if (sp[p])
++  {
++    *is_local = FALSE;
++    if (!string_get_tzoffset(sp, &p, &fields[8], TRUE))
++      return FALSE;
++  }
++  /* error if extraneous characters */
++  return sp[p] == '\0';
++}
++
++static struct
++{
++  char name[6];
++  int16_t offset;
++} const js_tzabbr[] = {
++    {"GMT", 0},        // Greenwich Mean Time
++    {"UTC", 0},        // Coordinated Universal Time
++    {"UT", 0},         // Universal Time
++    {"Z", 0},          // Zulu Time
++    {"EDT", -4 * 60},  // Eastern Daylight Time
++    {"EST", -5 * 60},  // Eastern Standard Time
++    {"CDT", -5 * 60},  // Central Daylight Time
++    {"CST", -6 * 60},  // Central Standard Time
++    {"MDT", -6 * 60},  // Mountain Daylight Time
++    {"MST", -7 * 60},  // Mountain Standard Time
++    {"PDT", -7 * 60},  // Pacific Daylight Time
++    {"PST", -8 * 60},  // Pacific Standard Time
++    {"WET", +0 * 60},  // Western European Time
++    {"WEST", +1 * 60}, // Western European Summer Time
++    {"CET", +1 * 60},  // Central European Time
++    {"CEST", +2 * 60}, // Central European Summer Time
++    {"EET", +2 * 60},  // Eastern European Time
++    {"EEST", +3 * 60}, // Eastern European Summer Time
++};
+ 
+-    /* hour, min, seconds */
+-    for (i = 0; i < 3; i++) {
+-      if (string_get_field(sp, &p, &fields[3 + i])) goto done;
++static BOOL string_get_tzabbr(const uint8_t *sp, int *pp, int *offset)
++{
++  for (size_t i = 0; i < countof(js_tzabbr); i++)
++  {
++    if (string_match(sp, pp, js_tzabbr[i].name))
++    {
++      *offset = js_tzabbr[i].offset;
++      return TRUE;
+     }
+-    // XXX: parse optional milliseconds?
++  }
++  return FALSE;
++}
+ 
+-    /* parse the time zone offset if present: [+-]HHmm */
+-    tz = 0;
+-    for (tz = 0; p < sp->len; p++) {
+-      sgn = string_get(sp, p);
+-      if (sgn == '+' || sgn == '-') {
++/* parse toString, toUTCString and other formats */
++QJS_STATIC BOOL js_date_parse_otherstring(const uint8_t *sp,
++                                          int fields[minimum_length(9)],
++                                          BOOL *is_local)
++{
++  int c, i, val, p = 0, p_start;
++  int num[3];
++  BOOL has_year = FALSE;
++  BOOL has_mon = FALSE;
++  BOOL has_time = FALSE;
++  int num_index = 0;
++
++  /* initialize fields to the beginning of 2001-01-01 */
++  fields[0] = 2001;
++  fields[1] = 1;
++  fields[2] = 1;
++  for (i = 3; i < 9; i++)
++  {
++    fields[i] = 0;
++  }
++  *is_local = TRUE;
++
++  while (string_skip_spaces(sp, &p))
++  {
++    p_start = p;
++    if ((c = sp[p]) == '+' || c == '-')
++    {
++      if (has_time && string_get_tzoffset(sp, &p, &fields[8], FALSE))
++      {
++        *is_local = FALSE;
++      }
++      else
++      {
+         p++;
+-        if (string_get_digits(sp, &p, 2, &hh)) goto done;
+-        if (string_get_digits(sp, &p, 2, &mm)) goto done;
+-        tz = hh * 60 + mm;
+-        if (sgn == '-') tz = -tz;
+-        break;
++        if (string_get_digits(sp, &p, &val, 1, 0))
++        {
++          if (c == '-')
++          {
++            if (val == 0)
++              return FALSE;
++            val = -val;
++          }
++          fields[0] = val;
++          has_year = TRUE;
++        }
++      }
++    }
++    else if (string_get_digits(sp, &p, &val, 1, 0))
++    {
++      if (string_skip_char(sp, &p, ':'))
++      {
++        /* time part */
++        fields[3] = val;
++        if (!string_get_digits(sp, &p, &fields[4], 1, 2))
++          return FALSE;
++        if (string_skip_char(sp, &p, ':'))
++        {
++          if (!string_get_digits(sp, &p, &fields[5], 1, 2))
++            return FALSE;
++          string_get_milliseconds(sp, &p, &fields[6]);
++        }
++        has_time = TRUE;
++      }
++      else
++      {
++        if (p - p_start > 2)
++        {
++          fields[0] = val;
++          has_year = TRUE;
++        }
++        else if (val < 1 || val > 31)
++        {
++          fields[0] = val + (val < 100) * 1900 + (val < 50) * 100;
++          has_year = TRUE;
++        }
++        else
++        {
++          if (num_index == 3)
++            return FALSE;
++          num[num_index++] = val;
++        }
++      }
++    }
++    else if (string_get_month(sp, &p, &fields[1]))
++    {
++      has_mon = TRUE;
++      string_skip_until(sp, &p, "0123456789 -/(");
++    }
++    else if (has_time && string_match(sp, &p, "PM"))
++    {
++      if (fields[3] < 12)
++        fields[3] += 12;
++      continue;
++    }
++    else if (has_time && string_match(sp, &p, "AM"))
++    {
++      if (fields[3] == 12)
++        fields[3] -= 12;
++      continue;
++    }
++    else if (string_get_tzabbr(sp, &p, &fields[8]))
++    {
++      *is_local = FALSE;
++      continue;
++    }
++    else if (c == '(')
++    { /* skip parenthesized phrase */
++      int level = 0;
++      while ((c = sp[p]) != '\0')
++      {
++        p++;
++        level += (c == '(');
++        level -= (c == ')');
++        if (!level)
++          break;
+       }
++      if (level > 0)
++        return FALSE;
++    }
++    else if (c == ')')
++    {
++      return FALSE;
++    }
++    else
++    {
++      if (has_year + has_mon + has_time + num_index)
++        return FALSE;
++      /* skip a word */
++      string_skip_until(sp, &p, " -/(");
+     }
++    string_skip_separators(sp, &p);
+   }
+-  for (i = 0; i < 7; i++) fields1[i] = fields[i];
+-  info.tm_year = fields[0] - 1900;
+-  info.tm_mon = fields[1];
+-  info.tm_mday = fields[2];
+-  info.tm_hour = fields[3];
+-  info.tm_min = 0;
+-  info.tm_isdst = 1;
+-  t = mktime(&info);
+-  dst_mode = info.tm_isdst == 1 ? 1 : 2;  // 1: dst, 2: no dst
+-  d = set_date_fields(fields1, is_local, dst_mode) - tz * 60000;
+-  rv = __JS_NewFloat64(ctx, d);
++  if (num_index + has_year + has_mon > 3)
++    return FALSE;
+ 
+-done:
+-  LEPUS_FreeValue(ctx, s);
+-  return rv;
++  switch (num_index)
++  {
++  case 0:
++    if (!has_year)
++      return FALSE;
++    break;
++  case 1:
++    if (has_mon)
++      fields[2] = num[0];
++    else
++      fields[1] = num[0];
++    break;
++  case 2:
++    if (has_year)
++    {
++      fields[1] = num[0];
++      fields[2] = num[1];
++    }
++    else if (has_mon)
++    {
++      fields[0] = num[1] + (num[1] < 100) * 1900 + (num[1] < 50) * 100;
++      fields[2] = num[0];
++    }
++    else
++    {
++      fields[1] = num[0];
++      fields[2] = num[1];
++    }
++    break;
++  case 3:
++    fields[0] = num[2] + (num[2] < 100) * 1900 + (num[2] < 50) * 100;
++    fields[1] = num[0];
++    fields[2] = num[1];
++    break;
++  default:
++    return FALSE;
++  }
++  if (fields[1] < 1 || fields[2] < 1)
++    return FALSE;
++  fields[1] -= 1;
++  return TRUE;
++}
++
++QJS_STATIC LEPUSValue js_Date_parse(LEPUSContext *ctx, LEPUSValueConst this_val,
++                                    int argc, LEPUSValueConst *argv) {
++  LEPUSValue s, rv;
++    int fields[9];
++    double fields1[9];
++    double d;
++    int i, c;
++    JSString *sp;
++    uint8_t buf[128];
++    BOOL is_local;
++
++    rv = LEPUS_NAN;
++
++    s = LEPUS_ToString(ctx, argv[0]);
++    if (LEPUS_IsException(s))
++        return LEPUS_EXCEPTION;
++
++    sp = LEPUS_VALUE_GET_STRING(s);
++    /* convert the string as a byte array */
++    for (i = 0; i < sp->len && i < (int)countof(buf) - 1; i++) {
++        c = string_get(sp, i);
++        if (c > 255)
++            c = (c == 0x2212) ? '-' : 'x';
++        buf[i] = c;
++    }
++    buf[i] = '\0';
++    if (js_date_parse_isostring(buf, fields, &is_local)
++    ||  js_date_parse_otherstring(buf, fields, &is_local)) {
++        static int const field_max[6] = { 0, 11, 31, 24, 59, 59 };
++        BOOL valid = TRUE;
++        /* check field maximum values */
++        for (i = 1; i < 6; i++) {
++            if (fields[i] > field_max[i])
++                valid = FALSE;
++        }
++        /* special case 24:00:00.000 */
++        if (fields[3] == 24 && (fields[4] | fields[5] | fields[6]))
++            valid = FALSE;
++        if (valid) {
++            for(i = 0; i < 7; i++)
++                fields1[i] = fields[i];
++            d = set_date_fields(fields1, is_local) - fields[8] * 60000;
++            rv = LEPUS_NewFloat64(ctx, d);
++        }
++    }
++    LEPUS_FreeValue(ctx, s);
++    return rv;
+ }
+ 
+ QJS_STATIC LEPUSValue js_Date_now(LEPUSContext *ctx, LEPUSValueConst this_val,
+@@ -50781,9 +51249,7 @@ QJS_STATIC LEPUSValue js_date_Symbol_toPrimitive(LEPUSContext *ctx,
+   }
+   switch (hint) {
+     case JS_ATOM_number:
+-#ifdef CONFIG_BIGNUM
+     case JS_ATOM_integer:
+-#endif
+       hint_num = HINT_NUMBER;
+       break;
+     case JS_ATOM_string:
+@@ -50807,6 +51273,7 @@ QJS_STATIC LEPUSValue js_date_getTimezoneOffset(LEPUSContext *ctx,
+   if (isnan(v))
+     return LEPUS_NAN;
+   else
++    /* assuming -8.64e15 <= v <= -8.64e15 */
+     return LEPUS_NewInt64(ctx, getTimezoneOffset((int64_t)trunc(v)));
+ }
+ 
+@@ -50940,6 +51407,16 @@ static const LEPUSCFunctionListEntry js_date_proto_funcs[] = {
+     LEPUS_CFUNC_DEF("toJSON", 1, js_date_toJSON),
+ };
+ 
++
++LEPUSValue LEPUS_NewDate(LEPUSContext *ctx, double epoch_ms)
++{
++    LEPUSValue obj = js_create_from_ctor(ctx, LEPUS_UNDEFINED, JS_CLASS_DATE);
++    if (LEPUS_IsException(obj))
++      return LEPUS_EXCEPTION;
++    JS_SetObjectData(ctx, obj, __JS_NewFloat64(ctx, time_clip(epoch_ms)));
++    return obj;
++}
++
+ void LEPUS_AddIntrinsicDate(LEPUSContext *ctx) {
+   CallGCFunc(JS_AddIntrinsicDate_GC, ctx);
+   LEPUSValueConst obj;
+@@ -51821,7 +52298,7 @@ void LEPUS_AddIntrinsicBaseObjects(LEPUSContext *ctx) {
+   /* XXX: create auto_initializer */
+   {
+     /* initialize Array.prototype[Symbol.unscopables] */
+-    char const unscopables[] =
++    static const char unscopables[] =
+         "copyWithin"
+         "\0"
+         "entries"
+-- 
+2.39.5 (Apple Git-154)
+

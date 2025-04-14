@@ -1,0 +1,166 @@
+diff --git forkSrcPrefix/src/interpreter/quickjs/source/libunicode.cc forkDstPrefix/src/interpreter/quickjs/source/libunicode.cc
+index 9128498bfdd17d4d96f6b3f89bdf542a7d6dca3f..0701c8ab088c1b1adf2d78d341393fc9d29b039f 100644
+--- forkSrcPrefix/src/interpreter/quickjs/source/libunicode.cc
++++ forkDstPrefix/src/interpreter/quickjs/source/libunicode.cc
+@@ -789,7 +789,7 @@ int unicode_normalize(uint32_t **pdst, const uint32_t *src, int src_len,
+   is_compat = n_type >> 1;
+ 
+   dbuf_init2(dbuf, opaque, realloc_func);
+-  if (dbuf_realloc(dbuf, sizeof(int) * src_len)) goto fail;
++  if (dbuf_realloc(dbuf, sizeof(int) * src_len, 1)) goto fail;
+ 
+   /* common case: latin1 is unaffected by NFC */
+   if (n_type == UNICODE_NFC) {
+diff --git forkSrcPrefix/src/interpreter/quickjs/source/quickjs.cc forkDstPrefix/src/interpreter/quickjs/source/quickjs.cc
+index 7ed59f4c2b1579f8dd364b94f7c921d2b19540e5..1e9a9e6ecd3b92de8a8d12350db483e089791326 100644
+--- forkSrcPrefix/src/interpreter/quickjs/source/quickjs.cc
++++ forkDstPrefix/src/interpreter/quickjs/source/quickjs.cc
+@@ -25218,7 +25218,7 @@ QJS_STATIC __exception int js_parse_for_in_of(JSParseState *s, int label_name,
+     int chunk_size = pos_expr - pos_next;
+     int offset = bc->size - pos_next;
+     int i;
+-    dbuf_realloc(bc, bc->size + chunk_size);
++    dbuf_realloc(bc, bc->size + chunk_size, 1);
+     dbuf_put(bc, bc->buf + pos_next, chunk_size);
+     memset(bc->buf + pos_next, OP_nop, chunk_size);
+     /* `next` part ends with a goto */
+@@ -25572,7 +25572,7 @@ QJS_STATIC __exception int js_parse_statement_or_decl(JSParseState *s,
+         int chunk_size = pos_body - pos_cont;
+         int offset = bc->size - pos_cont;
+         int i;
+-        dbuf_realloc(bc, bc->size + chunk_size);
++        dbuf_realloc(bc, bc->size + chunk_size, 1);
+         dbuf_put(bc, bc->buf + pos_cont, chunk_size);
+         memset(bc->buf + pos_cont, OP_nop, chunk_size);
+         /* increment part ends with a goto */
+@@ -33587,7 +33587,7 @@ QJS_STATIC int JS_WriteObjectAtoms(BCWriterState *s) {
+   /* XXX: could just append dbuf1 data, but it uses more memory if
+      dbuf1 is larger than dbuf */
+   atoms_size = s->dbuf.size;
+-  if (dbuf_realloc(&dbuf1, dbuf1.size + atoms_size)) goto fail;
++  if (dbuf_realloc(&dbuf1, dbuf1.size + atoms_size, 1)) goto fail;
+   memmove(dbuf1.buf + atoms_size, dbuf1.buf, dbuf1.size);
+   memcpy(dbuf1.buf, s->dbuf.buf, atoms_size);
+   dbuf1.size += atoms_size;
+diff --git forkSrcPrefix/src/interpreter/quickjs/source/libregexp.cc forkDstPrefix/src/interpreter/quickjs/source/libregexp.cc
+index 800da98690553d575bd6282c6973b3ef0acc5dec..88f4053e602c3d61b18dea12e849b0869be373ef 100644
+--- forkSrcPrefix/src/interpreter/quickjs/source/libregexp.cc
++++ forkDstPrefix/src/interpreter/quickjs/source/libregexp.cc
+@@ -123,7 +123,7 @@ static inline int is_digit(int c) { return c >= '0' && c <= '9'; }
+ 
+ /* insert 'len' bytes at position 'pos' */
+ static void dbuf_insert(DynBuf *s, int pos, int len) {
+-  dbuf_realloc(s, s->size + len);
++  dbuf_realloc(s, s->size + len, 1);
+   memmove(s->buf + pos + len, s->buf + pos, s->size - pos);
+   s->size += len;
+ }
+@@ -1620,7 +1620,7 @@ static int re_parse_alternative(REParseState *s, BOOL is_backward_dir) {
+          speed is not really critical here) */
+       end = s->byte_code.size;
+       term_size = end - term_start;
+-      if (dbuf_realloc(&s->byte_code, end + term_size)) return -1;
++      if (dbuf_realloc(&s->byte_code, end + term_size, 1)) return -1;
+       memmove(s->byte_code.buf + start + term_size, s->byte_code.buf + start,
+               end - start);
+       memcpy(s->byte_code.buf + start, s->byte_code.buf + end, term_size);
+diff --git forkSrcPrefix/src/gc/thread_pool.cc forkDstPrefix/src/gc/thread_pool.cc
+index 0005a3e75cc8347656fe1a466d1e587c22201589..b4718eee3c728a45e849f83b82bd53ff70476b5e 100644
+--- forkSrcPrefix/src/gc/thread_pool.cc
++++ forkDstPrefix/src/gc/thread_pool.cc
+@@ -63,11 +63,20 @@ BytePoolThread::~BytePoolThread() {
+   pool = nullptr;
+ }
+ 
+-void BytePoolThread::SetPriority(int32_t priority) {
++void BytePoolThread::SetPriority(int32_t priority)
++{
++#if defined(__WASI_SDK__) || defined(WASM_WASI)
++  // WASI doesn't support thread priority
++  (void)priority; // Avoid unused parameter warning
++  // Optionally log that priority setting is not supported
++  // std::cout << "Thread priority not supported in WASI environment";
++#else
+   int32_t result = setpriority(static_cast<int>(PRIO_PROCESS), tid, priority);
+-  if (result != 0) {
++  if (result != 0)
++  {
+     std::cout << "Failed to setpriority to :" << priority;
+   }
++#endif
+ }
+ 
+ void *BytePoolThread::WorkerFunc(void *param) {
+diff --git forkSrcPrefix/src/interpreter/quickjs/include/cutils.h forkDstPrefix/src/interpreter/quickjs/include/cutils.h
+index 97fd0b47891545f0c648a06c44ef6f17e62bec1c..c7443164b8580b770ac46976e8a48e6af955f94f 100644
+--- forkSrcPrefix/src/interpreter/quickjs/include/cutils.h
++++ forkDstPrefix/src/interpreter/quickjs/include/cutils.h
+@@ -48,12 +48,19 @@
+ #define stringify(s) tostring(s)
+ #define tostring(s) #s
+ 
++#if defined(__WASI_SDK__) || defined(WASM_WASI)
++#include <stddef.h> // For standard offsetof
++#ifndef countof
++#define countof(x) (sizeof(x) / sizeof((x)[0]))
++#endif
++#else
+ #ifndef offsetof
+ #define offsetof(type, field) ((size_t) & ((type *)0)->field)
+ #endif
+ #ifndef countof
+ #define countof(x) (sizeof(x) / sizeof((x)[0]))
+ #endif
++#endif
+ 
+ typedef int BOOL;
+ 
+@@ -211,7 +218,7 @@ typedef struct DynBuf {
+ QJS_HIDE void dbuf_init(DynBuf *s);
+ QJS_HIDE void dbuf_init2(DynBuf *s, void *opaque,
+                          DynBufReallocFunc *realloc_func);
+-QJS_HIDE int dbuf_realloc(DynBuf *s, size_t new_size, int alloc_tag = 1);
++QJS_HIDE int dbuf_realloc(DynBuf *s, size_t new_size, int alloc_tag);
+ QJS_HIDE int dbuf_write(DynBuf *s, size_t offset, const uint8_t *data,
+                         size_t len);
+ QJS_HIDE int dbuf_put(DynBuf *s, const uint8_t *data, size_t len);
+diff --git forkSrcPrefix/src/interpreter/quickjs/source/cutils.cc forkDstPrefix/src/interpreter/quickjs/source/cutils.cc
+index f0f68a63528787d8acfdbb2cf3fe52c4992affde..3d00ff79093c122078e18e82fe61c714fe80beb4 100644
+--- forkSrcPrefix/src/interpreter/quickjs/source/cutils.cc
++++ forkDstPrefix/src/interpreter/quickjs/source/cutils.cc
+@@ -123,7 +123,7 @@ int dbuf_realloc(DynBuf *s, size_t new_size, int alloc_tag) {
+ int dbuf_write(DynBuf *s, size_t offset, const uint8_t *data, size_t len) {
+   size_t end;
+   end = offset + len;
+-  if (dbuf_realloc(s, end)) return -1;
++  if (dbuf_realloc(s, end, 1)) return -1;
+   memcpy(s->buf + offset, data, len);
+   if (end > s->size) s->size = end;
+   return 0;
+@@ -131,7 +131,7 @@ int dbuf_write(DynBuf *s, size_t offset, const uint8_t *data, size_t len) {
+ 
+ int dbuf_put(DynBuf *s, const uint8_t *data, size_t len) {
+   if (unlikely((s->size + len) > s->allocated_size)) {
+-    if (dbuf_realloc(s, s->size + len)) return -1;
++    if (dbuf_realloc(s, s->size + len, 1)) return -1;
+   }
+   memcpy(s->buf + s->size, data, len);
+   s->size += len;
+@@ -140,7 +140,7 @@ int dbuf_put(DynBuf *s, const uint8_t *data, size_t len) {
+ 
+ int dbuf_put_self(DynBuf *s, size_t offset, size_t len) {
+   if (unlikely((s->size + len) > s->allocated_size)) {
+-    if (dbuf_realloc(s, s->size + len)) return -1;
++    if (dbuf_realloc(s, s->size + len, 1)) return -1;
+   }
+   memcpy(s->buf + s->size, s->buf + offset, len);
+   s->size += len;
+@@ -166,7 +166,7 @@ dbuf_printf(DynBuf *s, const char *fmt, ...) {
+     /* fast case */
+     return dbuf_put(s, (uint8_t *)buf, len);
+   } else {
+-    if (dbuf_realloc(s, s->size + len + 1)) return -1;
++    if (dbuf_realloc(s, s->size + len + 1, 1)) return -1;
+     va_start(ap, fmt);
+     vsnprintf((char *)(s->buf + s->size), s->allocated_size - s->size, fmt, ap);
+     va_end(ap);

@@ -1,0 +1,121 @@
+From ece2d435fa70c773af496b646ad37df859711e96 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Mon, 7 Apr 2025 22:08:42 +0900
+Subject: [PATCH] added String.prototype.isWellFormed and
+ String.prototype.toWellFormed
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 90 +++++++++++++++++++++++
+ 1 file changed, 90 insertions(+)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 1bca09f..7ad7ccd 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -39832,6 +39832,94 @@ QJS_STATIC int string_advance_index(JSString *p, int index, BOOL unicode) {
+   return index;
+ }
+ 
++/* return the position of the first invalid character in the string or
++   -1 if none */
++static int js_string_find_invalid_codepoint(JSString *p)
++{
++  int i, c;
++  if (!p->is_wide_char)
++    return -1;
++  for (i = 0; i < p->len; i++)
++  {
++    c = p->u.str16[i];
++    if (c >= 0xD800 && c <= 0xDFFF)
++    {
++      if (c >= 0xDC00 || (i + 1) >= p->len)
++        return i;
++      c = p->u.str16[i + 1];
++      if (c < 0xDC00 || c > 0xDFFF)
++        return i;
++      i++;
++    }
++  }
++  return -1;
++}
++
++static LEPUSValue js_string_isWellFormed(LEPUSContext *ctx, LEPUSValueConst this_val,
++                                      int argc, LEPUSValueConst *argv)
++{
++  LEPUSValue str;
++  JSString *p;
++  BOOL ret;
++
++  str = JS_ToStringCheckObject(ctx, this_val);
++  if (LEPUS_IsException(str))
++    return LEPUS_EXCEPTION;
++  p = LEPUS_VALUE_GET_STRING(str);
++  ret = (js_string_find_invalid_codepoint(p) < 0);
++  LEPUS_FreeValue(ctx, str);
++  return LEPUS_NewBool(ctx, ret);
++}
++
++QJS_STATIC LEPUSValue js_string_toWellFormed(LEPUSContext *ctx, LEPUSValueConst this_val,
++                                      int argc, LEPUSValueConst *argv)
++{
++  LEPUSValue str, ret;
++  JSString *p;
++  int c, i;
++
++  str = JS_ToStringCheckObject(ctx, this_val);
++  if (LEPUS_IsException(str))
++    return LEPUS_EXCEPTION;
++
++  p = LEPUS_VALUE_GET_STRING(str);
++  /* avoid reallocating the string if it is well-formed */
++  i = js_string_find_invalid_codepoint(p);
++  if (i < 0)
++    return str;
++
++  ret = js_new_string16(ctx, p->u.str16, p->len);
++  LEPUS_FreeValue(ctx, str);
++  if (LEPUS_IsException(ret))
++    return LEPUS_EXCEPTION;
++
++  p = LEPUS_VALUE_GET_STRING(ret);
++  for (; i < p->len; i++)
++  {
++    c = p->u.str16[i];
++    if (c >= 0xD800 && c <= 0xDFFF)
++    {
++      if (c >= 0xDC00 || (i + 1) >= p->len)
++      {
++        p->u.str16[i] = 0xFFFD;
++      }
++      else
++      {
++        c = p->u.str16[i + 1];
++        if (c < 0xDC00 || c > 0xDFFF)
++        {
++          p->u.str16[i] = 0xFFFD;
++        }
++        else
++        {
++          i++;
++        }
++      }
++    }
++  }
++  return ret;
++}
++
+ QJS_STATIC LEPUSValue js_string_indexOf(LEPUSContext *ctx,
+                                         LEPUSValueConst this_val, int argc,
+                                         LEPUSValueConst *argv,
+@@ -40846,6 +40934,8 @@ static const LEPUSCFunctionListEntry js_string_proto_funcs[] = {
+     LEPUS_CFUNC_DEF("charAt", 1, js_string_charAt),
+     LEPUS_CFUNC_DEF("concat", 1, js_string_concat),
+     LEPUS_CFUNC_DEF("codePointAt", 1, js_string_codePointAt),
++    LEPUS_CFUNC_DEF("isWellFormed", 0, js_string_isWellFormed),
++    LEPUS_CFUNC_DEF("toWellFormed", 0, js_string_toWellFormed),
+     LEPUS_CFUNC_MAGIC_DEF("indexOf", 1, js_string_indexOf, 0),
+     LEPUS_CFUNC_MAGIC_DEF("lastIndexOf", 1, js_string_indexOf, 1),
+     LEPUS_CFUNC_MAGIC_DEF("includes", 1, js_string_includes, 0),
+-- 
+2.39.5 (Apple Git-154)
+

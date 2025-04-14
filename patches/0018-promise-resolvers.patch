@@ -1,0 +1,67 @@
+From 0f9fa7792c59f75c44ab45f363853ed1a0cb50c7 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 8 Apr 2025 09:34:07 +0900
+Subject: [PATCH] added Promise.withResolvers added Promise.withResolvers added
+ Promise.withResolvers
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 24 ++++++++++-------------
+ 1 file changed, 10 insertions(+), 14 deletions(-)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index fd4583b..4ce079a 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -49198,17 +49198,15 @@ QJS_STATIC LEPUSValue js_promise_resolve(LEPUSContext *ctx,
+   return result_promise;
+ }
+ 
+-#if 0
+-static LEPUSValue js_promise___newPromiseCapability(LEPUSContext *ctx,
+-                                                 LEPUSValueConst this_val,
+-                                                 int argc, LEPUSValueConst *argv)
++
++QJS_STATIC LEPUSValue js_promise_withResolvers(LEPUSContext *ctx,
++                                        LEPUSValueConst this_val,
++                                        int argc, LEPUSValueConst *argv)
+ {
+     LEPUSValue result_promise, resolving_funcs[2], obj;
+-    LEPUSValueConst ctor;
+-    ctor = argv[0];
+-    if (!LEPUS_IsObject(ctor))
++    if (!LEPUS_IsObject(this_val))
+         return JS_ThrowTypeErrorNotAnObject(ctx);
+-    result_promise = js_new_promise_capability(ctx, resolving_funcs, ctor);
++    result_promise = js_new_promise_capability(ctx, resolving_funcs, this_val);
+     if (LEPUS_IsException(result_promise))
+         return result_promise;
+     obj = LEPUS_NewObject(ctx);
+@@ -49218,12 +49216,11 @@ static LEPUSValue js_promise___newPromiseCapability(LEPUSContext *ctx,
+         LEPUS_FreeValue(ctx, result_promise);
+         return LEPUS_EXCEPTION;
+     }
+-    JS_DefinePropertyValue_RC(ctx, obj, JS_ATOM_promise, result_promise, LEPUS_PROP_C_W_E);
+-    JS_DefinePropertyValue_RC(ctx, obj, JS_ATOM_resolve, resolving_funcs[0], LEPUS_PROP_C_W_E);
+-    JS_DefinePropertyValue_RC(ctx, obj, JS_ATOM_reject, resolving_funcs[1], LEPUS_PROP_C_W_E);
++    LEPUS_DefinePropertyValue(ctx, obj, JS_ATOM_promise, result_promise, LEPUS_PROP_C_W_E);
++    LEPUS_DefinePropertyValue(ctx, obj, JS_ATOM_resolve, resolving_funcs[0], LEPUS_PROP_C_W_E);
++    LEPUS_DefinePropertyValue(ctx, obj, JS_ATOM_reject, resolving_funcs[1], LEPUS_PROP_C_W_E);
+     return obj;
+ }
+-#endif
+ 
+ QJS_STATIC __exception int remainingElementsCount_add(
+     LEPUSContext *ctx, LEPUSValueConst resolve_element_env, int addend) {
+@@ -49856,8 +49853,7 @@ static const LEPUSCFunctionListEntry js_promise_funcs[] = {
+                           PROMISE_MAGIC_allSettled),
+     LEPUS_CFUNC_MAGIC_DEF("any", 1, js_promise_all, PROMISE_MAGIC_any),
+     LEPUS_CFUNC_DEF("race", 1, js_promise_race),
+-    // LEPUS_CFUNC_DEF("__newPromiseCapability", 1,
+-    // js_promise___newPromiseCapability ),
++    LEPUS_CFUNC_DEF("withResolvers", 0, js_promise_withResolvers),
+     LEPUS_CGETSET_DEF("[Symbol.species]", js_get_this, NULL),
+ };
+ 
+-- 
+2.39.5 (Apple Git-154)
+

@@ -1,0 +1,36 @@
+From 9b531382f833c3238b8c2286c81048e6e88c2609 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Mon, 7 Apr 2025 18:36:47 +0900
+Subject: [PATCH] Fix Map hash bug
+
+- `map_hash_key` must generate the same key for LEPUS_INT and LEPUS_FLOAT64
+   with the same value
+---
+ src/interpreter/quickjs/source/quickjs.cc | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 14a70c8..67bbc73 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -47445,7 +47445,7 @@ QJS_STATIC uint32_t map_hash_key(LEPUSContext *ctx, LEPUSValueConst key) {
+       h = (uintptr_t)LEPUS_VALUE_GET_PTR(key) * 3163;
+       break;
+     case LEPUS_TAG_INT:
+-      d = LEPUS_VALUE_GET_INT(key) * 3163;
++      d = LEPUS_VALUE_GET_INT(key);
+       goto hash_float64;
+     case LEPUS_TAG_FLOAT64:
+       d = LEPUS_VALUE_GET_FLOAT64(key);
+@@ -47454,7 +47454,7 @@ QJS_STATIC uint32_t map_hash_key(LEPUSContext *ctx, LEPUSValueConst key) {
+     hash_float64:
+       u.d = d;
+       h = (u.u32[0] ^ u.u32[1]) * 3163;
+-      break;
++      return h ^= LEPUS_TAG_FLOAT64;
+     default:
+       h = 0; /* XXX: bignum support */
+       break;
+-- 
+2.39.5 (Apple Git-154)
+

@@ -1,0 +1,181 @@
+diff --git forkSrcPrefix/src/interpreter/quickjs/include/quickjs.h forkDstPrefix/src/interpreter/quickjs/include/quickjs.h
+index ee79ac6d87fd4d98a5b14365f149a7c0e5ecaea5..6894baf1546152157e60cf37a0d369bdedc2a9c0 100644
+--- forkSrcPrefix/src/interpreter/quickjs/include/quickjs.h
++++ forkDstPrefix/src/interpreter/quickjs/include/quickjs.h
+@@ -937,6 +937,11 @@ static inline LEPUS_BOOL LEPUS_IsBigFloat(LEPUSValueConst v) {
+   int tag = LEPUS_VALUE_GET_TAG(v);
+   return tag == LEPUS_TAG_BIG_FLOAT;
+ }
++static inline LEPUS_BOOL LEPUS_IsBigInt(LEPUSValueConst v)
++{
++  int tag = LEPUS_VALUE_GET_TAG(v);
++  return tag == LEPUS_TAG_BIG_INT;
++}
+ #endif
+ 
+ static inline LEPUS_BOOL LEPUS_IsBool(LEPUSValueConst v) {
+@@ -1135,8 +1140,10 @@ LEPUSValue LEPUS_CallConstructor(LEPUSContext *ctx, LEPUSValueConst func_obj,
+ LEPUSValue LEPUS_CallConstructor2(LEPUSContext *ctx, LEPUSValueConst func_obj,
+                                   LEPUSValueConst new_target, int argc,
+                                   LEPUSValueConst *argv);
++LEPUS_BOOL LEPUS_DetectModule(const char *input, size_t input_len);
+ LEPUSValue LEPUS_Eval(LEPUSContext *ctx, const char *input, size_t input_len,
+                       const char *filename, int eval_flags);
++                      
+ #define LEPUS_EVAL_BINARY_LOAD_ONLY (1 << 0) /* only load the module */
+ LEPUSValue LEPUS_EvalBinary(LEPUSContext *ctx, const uint8_t *buf,
+                             size_t buf_len, int flags);
+@@ -1266,11 +1273,25 @@ LEPUS_BOOL LEPUS_StrictEq(LEPUSContext *ctx, LEPUSValueConst op1,
+                           LEPUSValueConst op2);
+ LEPUS_BOOL LEPUS_SameValue(LEPUSContext *ctx, LEPUSValueConst op1,
+                            LEPUSValueConst op2);
++LEPUS_BOOL LEPUS_SameValueZero(LEPUSContext *ctx, LEPUSValueConst op1,
++                           LEPUSValueConst op2);
+ // <Primjs end>
+ 
+ LEPUSValue LEPUS_NewPromiseCapability(LEPUSContext *ctx,
+                                       LEPUSValue *resolving_funcs);
+ 
++typedef enum LEPUSPromiseStateEnum
++{
++  LEPUS_PROMISE_PENDING,
++  LEPUS_PROMISE_FULFILLED,
++  LEPUS_PROMISE_REJECTED,
++} LEPUSPromiseStateEnum;
++
++LEPUSPromiseStateEnum LEPUS_PromiseState(LEPUSContext *ctx, LEPUSValueConst promise);
++
++LEPUSValue LEPUS_PromiseResult(LEPUSContext *ctx, LEPUSValueConst promise);
++LEPUS_BOOL LEPUS_IsPromise(LEPUSValueConst val);
++
+ /* return != 0 if the LEPUS code needs to be interrupted */
+ typedef int LEPUSInterruptHandler(LEPUSRuntime *rt, void *opaque);
+ void LEPUS_SetInterruptHandler(LEPUSRuntime *rt, LEPUSInterruptHandler *cb,
+@@ -1288,6 +1309,7 @@ typedef char *LEPUSModuleNormalizeFunc(LEPUSContext *ctx,
+ typedef LEPUSModuleDef *LEPUSModuleLoaderFunc(LEPUSContext *ctx,
+                                               const char *module_name,
+                                               void *opaque);
++                                              
+ 
+ /* module_normalize = NULL is allowed and invokes the default module
+    filename normalizer */
+@@ -1296,6 +1318,10 @@ void LEPUS_SetModuleLoaderFunc(LEPUSRuntime *rt,
+                                LEPUSModuleLoaderFunc *module_loader,
+                                void *opaque);
+ 
++                               
++
++LEPUSValue LEPUS_GetModuleNamespace(LEPUSContext *ctx, struct LEPUSModuleDef *m);
++
+ /* LEPUS Job support */
+ 
+ typedef LEPUSValue LEPUSJobFunc(LEPUSContext *ctx, int argc,
+diff --git forkSrcPrefix/src/interpreter/quickjs/source/quickjs.cc forkDstPrefix/src/interpreter/quickjs/source/quickjs.cc
+index 1e9a9e6ecd3b92de8a8d12350db483e089791326..77dd2750960b1d6f0e0a3ee99cd7103c5d4fa094 100644
+--- forkSrcPrefix/src/interpreter/quickjs/source/quickjs.cc
++++ forkDstPrefix/src/interpreter/quickjs/source/quickjs.cc
+@@ -26713,6 +26713,12 @@ QJS_STATIC LEPUSValue js_get_module_ns(LEPUSContext *ctx, LEPUSModuleDef *m) {
+   return m->module_ns;
+ }
+ 
++LEPUSValue LEPUS_GetModuleNamespace(LEPUSContext *ctx, struct LEPUSModuleDef *m)
++{
++    /* Simply call the existing static function */
++    return js_get_module_ns(ctx, m);
++}
++
+ /* Load all the required modules for module 'm' */
+ int js_resolve_module(LEPUSContext *ctx, LEPUSModuleDef *m) {
+   int i;
+@@ -32706,6 +32712,47 @@ LEPUSValue JS_EvalObject(LEPUSContext *ctx, LEPUSValueConst this_obj,
+ #endif
+ }
+ 
++LEPUS_BOOL LEPUS_DetectModule(const char *input, size_t input_len)
++{
++    LEPUSRuntime *rt;
++    LEPUSContext *ctx;
++    LEPUSValue val;
++    bool is_module;
++    is_module = true;
++    
++    rt = LEPUS_NewRuntime();
++    if (!rt)
++        return false;
++    
++    ctx = LEPUS_NewContextRaw(rt);
++    if (!ctx) {
++        LEPUS_FreeRuntime(rt);
++        return false;
++    }
++    
++    LEPUS_AddIntrinsicRegExpCompiler(ctx); // otherwise regexp literals don't parse
++    
++    // Updated call to match the new __JS_EvalInternal signature
++    val = __JS_EvalInternal(ctx, LEPUS_UNDEFINED, input, input_len, "<unnamed>", 
++                           LEPUS_EVAL_TYPE_MODULE|LEPUS_EVAL_FLAG_COMPILE_ONLY, 
++                           -1, false, NULL);
++    
++    if (LEPUS_IsException(val)) {
++        const char *msg = LEPUS_ToCString(ctx, rt->current_exception);
++        // gruesome hack to recognize exceptions from import statements;
++        // necessary because we don't pass in a module loader
++        is_module = !!strstr(msg, "ReferenceError: could not load module");
++        LEPUS_FreeCString(ctx, msg);
++    }
++    
++    LEPUS_FreeValue(ctx, val);
++    LEPUS_FreeContext(ctx);
++    LEPUS_FreeRuntime(rt);
++    
++    return is_module;
++}
++
++
+ LEPUSValue LEPUS_Eval(LEPUSContext *ctx, const char *input, size_t input_len,
+                       const char *filename, int eval_flags) {
+   CallGCFunc(JS_Eval_GC, ctx, input, input_len, filename, eval_flags);
+@@ -48204,6 +48251,30 @@ void JS_AddIntrinsicFinalizationRegistry(LEPUSContext *ctx) {
+ 
+ /* Promise */
+ 
++LEPUSPromiseStateEnum LEPUS_PromiseState(LEPUSContext *ctx, LEPUSValueConst promise)
++{
++   JSPromiseData *s =
++      static_cast<JSPromiseData *>(LEPUS_GetOpaque(promise, JS_CLASS_PROMISE));
++    if (!s) return (LEPUSPromiseStateEnum)-1;
++    return (LEPUSPromiseStateEnum)s->promise_state;
++}
++
++LEPUSValue LEPUS_PromiseResult(LEPUSContext *ctx, LEPUSValueConst promise)
++{
++    JSPromiseData *s =
++      static_cast<JSPromiseData *>(LEPUS_GetOpaque(promise, JS_CLASS_PROMISE));
++    if (!s)
++        return LEPUS_UNDEFINED;
++    return LEPUS_DupValue(ctx, s->promise_result);
++}
++
++LEPUS_BOOL LEPUS_IsPromise(LEPUSValueConst val)
++{
++    if (LEPUS_VALUE_GET_TAG(val) != LEPUS_TAG_OBJECT)
++        return false;
++    return LEPUS_VALUE_GET_OBJ(val)->class_id == JS_CLASS_PROMISE;
++}
++
+ int LEPUS_MoveUnhandledRejectionToException(LEPUSContext *ctx) {
+   CallGCFunc(JS_MoveUnhandledRejectionToException_GC, ctx);
+   //  assert(LEPUS_IsNull(ctx->rt->current_exception));
+@@ -51913,6 +51984,12 @@ LEPUS_BOOL LEPUS_SameValue(LEPUSContext *ctx, LEPUSValueConst op1,
+   CallGCFunc(JS_SameValue_GC, ctx, op1, op2);
+   return js_same_value(ctx, op1, op2);
+ }
++
++LEPUS_BOOL LEPUS_SameValueZero(LEPUSContext *ctx, LEPUSValueConst op1,
++                           LEPUSValueConst op2) {
++  CallGCFunc(JS_SameValue_GC, ctx, op1, op2);
++  return js_same_value_zero(ctx, op1, op2);
++}
+ // <Primjs end>
+ 
+ LEPUSValue LEPUS_NewArrayBuffer(LEPUSContext *ctx, uint8_t *buf, size_t len,

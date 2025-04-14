@@ -1,0 +1,72 @@
+From 6644332c2c7bba33c918172fb6d5d242aec7b8d3 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 8 Apr 2025 09:23:00 +0900
+Subject: [PATCH] fixed buffer overflow in BJSON String and BigInt reader
+
+---
+ src/interpreter/quickjs/include/quickjs-inner.h |  2 ++
+ src/interpreter/quickjs/source/quickjs.cc       | 12 +++++++++---
+ 2 files changed, 11 insertions(+), 3 deletions(-)
+
+diff --git a/src/interpreter/quickjs/include/quickjs-inner.h b/src/interpreter/quickjs/include/quickjs-inner.h
+index b6c2696..13fbe05 100644
+--- a/src/interpreter/quickjs/include/quickjs-inner.h
++++ b/src/interpreter/quickjs/include/quickjs-inner.h
+@@ -430,6 +430,8 @@ struct LEPUSRuntime {
+ #endif
+ };
+ 
++#define LEPUS_INVALID_CLASS_ID 0
++
+ static const char *const native_error_name[JS_NATIVE_ERROR_COUNT] = {
+     "EvalError", "RangeError", "ReferenceError", "SyntaxError",
+     "TypeError", "URIError",   "InternalError",  "AggregateError"};
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index d4eeca7..fd4583b 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -144,9 +144,11 @@ int64_t HEAP_TAG_INNER = 0;
+ 
+ /* define to include Atomics.* operations which depend on the OS
+    threads */
+-#if !defined(EMSCRIPTEN)
++#if defined(__WASI_SDK__) && defined(ENABLE_ATOMICS)
++#ifndef CONFIG_ATOMICS
+ #define CONFIG_ATOMICS
+ #endif
++#endif
+ 
+ /* dump object free */
+ // #define DUMP_FREE
+@@ -34051,6 +34053,10 @@ QJS_STATIC JSString *JS_ReadString(BCReaderState *s) {
+   is_wide_char = len & 1;
+   len >>= 1;
+   p = js_alloc_string(s->ctx, len, is_wide_char);
++  if (len > JS_STRING_LEN_MAX) {
++      LEPUS_ThrowInternalError(s->ctx, "string too long");
++      return NULL;
++  }
+   if (!p) {
+     s->error_state = -1;
+     return NULL;
+@@ -55225,7 +55231,7 @@ static LEPUSValue js_atomics_wait(LEPUSContext *ctx, LEPUSValueConst this_obj,
+   }
+ 
+   waiter = &waiter_s;
+-  waiter->ptr = ptr;
++  waiter->ptr = static_cast<int32_t *>(ptr);
+   pthread_cond_init(&waiter->cond, NULL);
+   waiter->linked = TRUE;
+   list_add_tail(&waiter->link, &js_atomics_waiter_list);
+@@ -55487,7 +55493,7 @@ const uint16_t *LEPUS_GetStringChars(LEPUSContext *ctx, LEPUSValueConst str) {
+ }
+ 
+ LEPUSClassID LEPUS_GetClassID(LEPUSContext *ctx, LEPUSValueConst obj) {
+-  if (LEPUS_VALUE_IS_NOT_OBJECT(obj)) return 0;
++  if (LEPUS_VALUE_IS_NOT_OBJECT(obj)) return LEPUS_INVALID_CLASS_ID;
+ 
+   LEPUSObject *p = LEPUS_VALUE_GET_OBJ(obj);
+   return p->class_id;
+-- 
+2.39.5 (Apple Git-154)
+

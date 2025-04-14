@@ -1,0 +1,26 @@
+From 270885063f510b3fb43bbc5a235ebc7eb9b60c6c Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Wed, 9 Apr 2025 20:20:42 +0900
+Subject: [PATCH] fix warning
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 14a7d62..e92b52d 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -6219,7 +6219,8 @@ void LEPUS_ComputeMemoryUsage(LEPUSRuntime *rt, LEPUSMemoryUsage *s) {
+   }
+   struct list_head *el, *el1;
+   int i;
+-  JSMemoryUsage_helper mem = {0}, *hp = &mem;
++  JSMemoryUsage_helper mem, *hp = &mem;
++  memset(&mem, 0, sizeof(mem));
+ 
+   s->malloc_count = rt->malloc_state.malloc_count;
+   s->malloc_size = rt->malloc_state.malloc_size;
+-- 
+2.39.5 (Apple Git-154)
+

@@ -1,0 +1,44 @@
+/**
+ * @file wasi_version.h
+ * @brief WASI SDK version information parsed from VERSION file
+ * @note This file is auto-generated. Do not edit directly.
+ */
+
+#ifndef WASI_VERSION_H
+#define WASI_VERSION_H
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+/**
+ * WASI SDK version information
+ */
+#define WASI_VERSION "@WASI_VERSION@"
+
+/**
+ * WASI-libc commit hash
+ */
+#define WASI_WASI_LIBC "@WASI_WASI_LIBC@"
+
+/**
+ * LLVM commit hash
+ */
+#define WASI_LLVM "@WASI_LLVM@"
+
+/**
+ * LLVM version
+ */
+#define WASI_LLVM_VERSION "@WASI_LLVM_VERSION@"
+
+/**
+ * Configuration hash
+ */
+#define WASI_CONFIG "@WASI_CONFIG@"
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* WASI_VERSION_H */

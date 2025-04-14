@@ -1,0 +1,17 @@
+diff --git forkSrcPrefix/src/interpreter/quickjs/source/quickjs.cc forkDstPrefix/src/interpreter/quickjs/source/quickjs.cc
+index cef6d97713e8d6b27f1d204d39f1608db52851b5..af8e5ede8c05c6ed63edbfb3d448458d73486aa6 100644
+--- forkSrcPrefix/src/interpreter/quickjs/source/quickjs.cc
++++ forkDstPrefix/src/interpreter/quickjs/source/quickjs.cc
+@@ -45523,6 +45523,12 @@ QJS_STATIC int js_json_to_str(LEPUSContext *ctx, JSONStringifyContext *jsc,
+ 
+   BOOL has_content = FALSE, is_lepus_array = FALSE;
+ 
++  if (js_check_stack_overflow(ctx, 0))
++  {
++    JS_ThrowStackOverflow(ctx);
++    goto exception;
++  }
++
+   switch (LEPUS_VALUE_GET_NORM_TAG(val)) {
+ #ifdef ENABLE_LEPUSNG
+     case LEPUS_TAG_LEPUS_REF: {

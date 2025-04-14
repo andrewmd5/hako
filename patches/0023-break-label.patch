@@ -1,0 +1,57 @@
+From 0f662715396d893c63343fdb4a454ec201c0b855 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 8 Apr 2025 13:13:12 +0900
+Subject: [PATCH] fixed break statement in the presence of labels
+
+---
+ src/interpreter/quickjs/include/quickjs-inner.h | 3 ++-
+ src/interpreter/quickjs/source/quickjs.cc       | 5 ++++-
+ 2 files changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/src/interpreter/quickjs/include/quickjs-inner.h b/src/interpreter/quickjs/include/quickjs-inner.h
+index 13fbe05..65824ea 100644
+--- a/src/interpreter/quickjs/include/quickjs-inner.h
++++ b/src/interpreter/quickjs/include/quickjs-inner.h
+@@ -2765,7 +2765,8 @@ typedef struct BlockEnv {
+   int drop_count;    /* number of stack elements to drop */
+   int label_finally; /* -1 if none */
+   int scope_level;
+-  int has_iterator;
++  uint8_t has_iterator : 1;
++  uint8_t is_regular_stmt : 1; /* i.e. not a loop statement */
+ } BlockEnv;
+ 
+ typedef struct RelocEntry {
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index e9060a8..2dc8696 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -24935,6 +24935,7 @@ QJS_STATIC void push_break_entry(JSFunctionDef *fd, BlockEnv *be,
+   be->label_finally = -1;
+   be->scope_level = fd->scope_level;
+   be->has_iterator = FALSE;
++  be->is_regular_stmt = FALSE;
+ }
+ 
+ QJS_STATIC void pop_break_entry(JSFunctionDef *fd) {
+@@ -24959,7 +24960,8 @@ __exception int emit_break(JSParseState *s, JSAtom name, int is_cont) {
+       return 0;
+     }
+     if (!is_cont && top->label_break != -1 &&
+-        (name == JS_ATOM_NULL || top->label_name == name)) {
++        ((name == JS_ATOM_NULL && !top->is_regular_stmt) ||
++             top->label_name == name)) {
+       emit_goto(s, OP_goto, top->label_break);
+       return 0;
+     }
+@@ -25518,6 +25520,7 @@ QJS_STATIC __exception int js_parse_statement_or_decl(JSParseState *s,
+       label_break = new_label(s);
+       push_break_entry(s->cur_func, &break_entry, label_name, label_break, -1,
+                        0);
++      break_entry.is_regular_stmt = TRUE;
+       if (!(s->cur_func->js_mode & JS_MODE_STRICT) &&
+           (decl_mask & DECL_MASK_FUNC_WITH_LABEL)) {
+         mask = DECL_MASK_FUNC | DECL_MASK_FUNC_WITH_LABEL;
+-- 
+2.39.5 (Apple Git-154)
+

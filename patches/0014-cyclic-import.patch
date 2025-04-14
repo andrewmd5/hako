@@ -1,0 +1,62 @@
+From bc0c2194a77cee81f3192534037a363e40b9f413 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Mon, 7 Apr 2025 21:34:55 +0900
+Subject: [PATCH] throw when modules self-import
+
+circular deps are fine, this particular use-case causes a memory-leak
+---
+ src/interpreter/quickjs/source/quickjs.cc | 23 ++++++++++++++++++-----
+ 1 file changed, 18 insertions(+), 5 deletions(-)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index c0ef2e4..1bca09f 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -26881,11 +26881,13 @@ LEPUSValue LEPUS_GetModuleNamespace(LEPUSContext *ctx, struct LEPUSModuleDef *m)
+ }
+ 
+ /* Load all the required modules for module 'm' */
+-int js_resolve_module(LEPUSContext *ctx, LEPUSModuleDef *m) {
++int js_resolve_module(LEPUSContext *ctx, LEPUSModuleDef *m)
++{
+   int i;
+   LEPUSModuleDef *m1;
+ 
+-  if (m->resolved) return 0;
++  if (m->resolved)
++    return 0;
+ #ifdef DUMP_MODULE_RESOLVE
+   {
+     char buf1[ATOM_GET_STR_BUF_SIZE];
+@@ -26895,14 +26897,25 @@ int js_resolve_module(LEPUSContext *ctx, LEPUSModuleDef *m) {
+ #endif
+   m->resolved = TRUE;
+   /* resolve each requested module */
+-  for (i = 0; i < m->req_module_entries_count; i++) {
++  for (i = 0; i < m->req_module_entries_count; i++)
++  {
+     JSReqModuleEntry *rme = &m->req_module_entries[i];
++
++    // Detect self-imports here and reject them
++    if (rme->module_name == m->module_name)
++    {
++      LEPUS_ThrowSyntaxError(ctx, "Self-import not supported: module cannot import from itself");
++      return -1;
++    }
++
+     m1 = js_host_resolve_imported_module(ctx, m->module_name, rme->module_name);
+-    if (!m1) return -1;
++    if (!m1)
++      return -1;
+     rme->module = m1;
+     /* already done in js_host_resolve_imported_module() except if
+        the module was loaded with LEPUS_EvalBinary() */
+-    if (js_resolve_module(ctx, m1) < 0) return -1;
++    if (js_resolve_module(ctx, m1) < 0)
++      return -1;
+   }
+   return 0;
+ }
+-- 
+2.39.5 (Apple Git-154)
+

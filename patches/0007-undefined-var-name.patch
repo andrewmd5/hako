@@ -1,0 +1,26 @@
+From cd6f682375ed24d72132bab10f208aa4b86570dc Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Mon, 7 Apr 2025 14:38:18 +0900
+Subject: [PATCH] 'undefined' is a valid let/const variable name. It gives a
+ SyntaxError at top level because it is already defined
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index af8e5ed..972a355 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -23020,7 +23020,7 @@ __exception int js_define_var(JSParseState *s, JSAtom name, int tok) {
+       (fd->js_mode & JS_MODE_STRICT)) {
+     return js_parse_error(s, "invalid variable name in strict mode");
+   }
+-  if ((name == JS_ATOM_let || name == JS_ATOM_undefined) &&
++  if (name == JS_ATOM_let &&
+       (tok == TOK_LET || tok == TOK_CONST)) {
+     return js_parse_error(s, "invalid lexical variable name");
+   }
+-- 
+2.39.5 (Apple Git-154)
+

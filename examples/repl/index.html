@@ -1,0 +1,1416 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Hako REPL</title>
+    <!-- Prism CSS and JS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-javascript.min.js"></script>
+    <!-- Fira Code from Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600;700&display=swap"
+        rel="stylesheet" />
+    <style>
+        /* Global resets and ensure no horizontal overflow */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: "Fira Code", monospace;
+        }
+
+        html,
+        body {
+            height: 100%;
+            width: 100%;
+            overflow-x: hidden;
+            /* Prevent horizontal scrolling */
+        }
+
+        html {
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            text-rendering: optimizeLegibility;
+        }
+
+        body {
+            background-color: #1a1a1a;
+            color: #f0f0f0;
+            overflow: hidden;
+            position: fixed;
+        }
+
+        /* Terminal container and content responsiveness */
+        #terminal-container {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            /* Use viewport width to guarantee responsiveness */
+            width: 100vw;
+            max-width: 100%;
+            overflow: hidden;
+        }
+
+        #terminal {
+            flex: 1;
+            overflow-y: auto;
+            overflow-x: hidden;
+            /* Prevent horizontal scroll */
+            padding: 16px;
+            padding-bottom: 8px;
+            font-size: 14px;
+            line-height: 1.5;
+            transform: translateZ(0);
+            word-wrap: break-word;
+        }
+
+        .entry {
+            margin-bottom: 16px;
+            border-bottom: 1px solid #333;
+            padding-bottom: 16px;
+        }
+
+        .line {
+            display: flex;
+            margin-bottom: 8px;
+            width: 100%;
+        }
+
+        .prompt {
+            color: #888;
+            margin-right: 8px;
+            user-select: none;
+            font-weight: bold;
+        }
+
+        .content {
+            white-space: pre-wrap;
+            word-break: break-word;
+            flex: 1;
+        }
+
+        .input-content {
+            color: #ccc;
+            white-space: pre-wrap;
+        }
+
+        #editing,
+        #highlighting {
+            margin: 0;
+            padding: 0;
+            border: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        #editing,
+        #highlighting,
+        #highlighting * {
+            font-size: 14px;
+            font-family: "Fira Code", monospace;
+            line-height: 1.5;
+            font-feature-settings: "calt" 1, "liga" 1;
+        }
+
+        .input-area {
+            display: flex;
+            border-top: 1px solid #333;
+            padding: 12px;
+            background-color: #1a1a1a;
+            min-height: 48px;
+            position: relative;
+            width: 100%;
+            z-index: 10;
+            flex-shrink: 0;
+        }
+
+        #input-prompt {
+            color: #888;
+            margin-right: 8px;
+            user-select: none;
+            font-weight: bold;
+        }
+
+        .code-input-wrapper {
+            flex: 1;
+            position: relative;
+            min-height: 24px;
+            display: flex;
+        }
+
+        .line-numbers {
+            width: 30px;
+            padding-right: 8px;
+            text-align: right;
+            color: #666;
+            user-select: none;
+        }
+
+        .editor-container {
+            flex: 1;
+            position: relative;
+        }
+
+        #editing,
+        #highlighting {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        #editing {
+            z-index: 1;
+            color: transparent;
+            background: transparent;
+            caret-color: white;
+            resize: none;
+            border: none;
+            outline: none;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow: hidden;
+            padding-left: 4px;
+            text-shadow: 0 0 0 transparent;
+            min-height: 24px;
+        }
+
+        #highlighting {
+            z-index: 0;
+            overflow: hidden;
+            padding-left: 4px;
+            transform: translateZ(0);
+            backface-visibility: hidden;
+        }
+
+        #highlighting code {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            background: transparent !important;
+        }
+
+        :not(pre)>code[class*="language-"],
+        pre[class*="language-"] {
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+            padding: 0 !important;
+            margin: 0 !important;
+        }
+
+        .type-string {
+            color: #a8cc8c;
+        }
+
+        .type-number {
+            color: #f0c674;
+        }
+
+        .type-boolean {
+            color: #81a2be;
+        }
+
+        .type-null,
+        .type-undefined {
+            color: #b294bb;
+            font-style: italic;
+        }
+
+        .type-object {
+            color: #70c0b1;
+        }
+
+        .type-function {
+            color: #de935f;
+        }
+
+        .error {
+            color: #cc6666;
+        }
+
+        .console-log {
+            color: #b5bd68;
+        }
+
+        .console-warn {
+            color: #f0c674;
+        }
+
+        .console-error {
+            color: #cc6666;
+        }
+
+        .console-info {
+            color: #81a2be;
+        }
+
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #1a1a1a;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #444;
+            border-radius: 2px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+
+        .obj-key {
+            color: #c5c8c6;
+        }
+
+        .obj-colon {
+            color: #969896;
+        }
+
+        .obj-comma {
+            color: #969896;
+        }
+
+        .obj-brace {
+            color: #969896;
+        }
+
+        .obj-bracket {
+            color: #969896;
+        }
+
+        #runtime-status {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            background-color: #333;
+            color: #ccc;
+            z-index: 200;
+        }
+
+        .status-loading {
+            background-color: #665100 !important;
+            color: #f0c674 !important;
+        }
+
+        .status-ready {
+            background-color: #375323 !important;
+            color: #b5bd68 !important;
+        }
+
+        .status-error {
+            background-color: #562323 !important;
+            color: #cc6666 !important;
+        }
+
+        /* Mobile styles */
+        @media (max-width: 768px) {
+            #terminal {
+                padding: 10px;
+                font-size: 13px;
+                overflow-x: hidden;
+                /* Ensure no horizontal scroll on mobile */
+            }
+
+            .input-area {
+                padding: 8px;
+                min-height: 44px;
+            }
+
+            #editing,
+            #highlighting,
+            #highlighting * {
+                font-size: 13px;
+            }
+
+            .line-numbers {
+                width: 24px;
+                min-width: 24px;
+            }
+
+            .prompt,
+            #input-prompt {
+                font-size: 13px;
+            }
+
+            .entry {
+                margin-bottom: 12px;
+                padding-bottom: 12px;
+            }
+
+            #runtime-status {
+                top: 5px;
+                right: 5px;
+                font-size: 10px;
+                padding: 3px 6px;
+            }
+        }
+
+        /* Adjust terminal height when mobile keyboard is open */
+        @media (max-width: 768px) and (max-height: 600px) {
+            #terminal {
+                max-height: 60vh;
+            }
+
+            body.keyboard-open #terminal {
+                max-height: 40vh;
+            }
+        }
+
+        /* High DPI displays */
+        @media (-webkit-min-device-pixel-ratio: 1.5),
+        (min-resolution: 144dpi) {
+            * {
+                letter-spacing: 0.02em;
+            }
+
+            #editing,
+            #highlighting,
+            #highlighting * {
+                font-size: 15px;
+            }
+
+            .line-numbers,
+            #input-prompt,
+            .prompt {
+                font-weight: 500;
+            }
+
+            @media (max-width: 768px) {
+
+                #editing,
+                #highlighting,
+                #highlighting * {
+                    font-size: 14px;
+                }
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div id="terminal-container">
+        <div id="runtime-status">Loading Hako...</div>
+        <div id="terminal"></div>
+        <div class="input-area">
+            <div id="input-prompt">></div>
+            <div class="code-input-wrapper">
+                <div class="line-numbers" id="line-numbers">1</div>
+                <div class="editor-container">
+                    <textarea id="editing" spellcheck="false" autofocus></textarea>
+                    <pre id="highlighting"
+                        aria-hidden="true"><code class="language-javascript" id="highlighting-content"></code></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <script type="module">
+        // Import necessary components from Hako
+        import {
+            decodeVariant,
+            createHakoRuntime,
+            HAKO_PROD,
+        } from "hakojs";
+
+        // DOM elements
+        const terminal = document.getElementById("terminal");
+        const editing = document.getElementById("editing");
+        const highlighting = document.getElementById("highlighting");
+        const highlightingContent = document.getElementById(
+            "highlighting-content",
+        );
+        const lineNumbers = document.getElementById("line-numbers");
+        const runtimeStatus = document.getElementById("runtime-status");
+
+        // Hako runtime and context
+        let runtime;
+        let context;
+
+        // Command history variables
+        const commandHistory = [];
+        let historyIndex = -1;
+        let tempCommand = ""; // To store current input when navigating history
+
+        // Initialize Hako runtime
+        async function initializeHako() {
+            try {
+                runtimeStatus.textContent = "Loading Hako...";
+                runtimeStatus.className = "status-loading";
+
+                // Initialize Hako with the WASM binary
+                const wasmBinary = decodeVariant(HAKO_PROD);
+                runtime = await createHakoRuntime({
+                    wasm: {
+                        io: {
+                            stdout: (lines) => {
+                                console.log(lines);
+                                addConsoleOutput({
+                                    type: "log",
+                                    args: [lines],
+                                });
+                            },
+                            stderr: (lines) => {
+                                console.error(lines);
+                                addConsoleOutput({
+                                    type: "error",
+                                    args: [lines],
+                                });
+                            },
+                        },
+                    },
+                    loader: {
+                        binary: wasmBinary,
+                        fetch: fetch,
+                    },
+                });
+
+                // Create context
+                context = runtime.createContext();
+
+                // Set up a bigger stack size (1MB)
+                context.setMaxStackSize(1024 * 1024);
+
+                // Add custom globals to the context
+                setupGlobals();
+
+                // Update status to ready
+                runtimeStatus.textContent = `Hako Ready`;
+                runtimeStatus.className = "status-ready";
+
+                // Add welcome message with build info
+                addWelcomeMessage();
+            } catch (error) {
+                console.error("Error initializing Hako:", error);
+                runtimeStatus.textContent = "Hako Error";
+                runtimeStatus.className = "status-error";
+
+                // Add error message to terminal
+                addErrorEntry(
+                    `Failed to initialize Hako: ${error.message}`,
+                );
+            }
+        }
+
+        // Set up global objects and functions for the Hako context
+        function setupGlobals() {
+            if (!context) return;
+
+            // Get the global object
+            const globalObj = context.getGlobalObject();
+
+            // Add console methods if they don't exist
+            const consoleObj = context.newObject();
+
+            // console.log
+            const consoleLog = context.newFunction("log", (...args) => {
+                const jsArgs = args.map((arg) => arg.toNativeValue().value);
+                console.log(...jsArgs);
+                addConsoleOutput({ type: "log", args: jsArgs });
+                return context.undefined();
+            });
+            consoleObj.setProperty("log", consoleLog);
+
+            // console.warn
+            const consoleWarn = context.newFunction("warn", (...args) => {
+                const jsArgs = args.map((arg) => arg.toNativeValue().value);
+                console.warn(...jsArgs);
+                addConsoleOutput({ type: "warn", args: jsArgs });
+                return context.undefined();
+            });
+            consoleObj.setProperty("warn", consoleWarn);
+
+            // console.error
+            const consoleError = context.newFunction("error", (...args) => {
+                const jsArgs = args.map((arg) => arg.toNativeValue().value);
+                console.error(...jsArgs);
+                addConsoleOutput({ type: "error", args: jsArgs });
+                return context.undefined();
+            });
+            consoleObj.setProperty("error", consoleError);
+
+            // console.info
+            const consoleInfo = context.newFunction("info", (...args) => {
+                const jsArgs = args.map((arg) => arg.toNativeValue().value);
+                console.info(...jsArgs);
+                addConsoleOutput({ type: "info", args: jsArgs });
+                return context.undefined();
+            });
+            consoleObj.setProperty("info", consoleInfo);
+
+            // Set console on global
+            globalObj.setProperty("console", consoleObj);
+
+            // Release resources
+            consoleLog.dispose();
+            consoleWarn.dispose();
+            consoleError.dispose();
+            consoleInfo.dispose();
+            consoleObj.dispose();
+            globalObj.dispose();
+        }
+
+        function handleMobileKeyboard() {
+            if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
+                const originalHeight = window.innerHeight;
+
+                window.addEventListener('resize', function () {
+                    if (window.innerHeight < originalHeight * 0.8) {
+                        // Keyboard is likely open
+                        document.body.classList.add('keyboard-open');
+                        setTimeout(function () {
+                            editing.scrollIntoView(false);
+                        }, 100);
+                    } else {
+                        // Keyboard is likely closed
+                        document.body.classList.remove('keyboard-open');
+                    }
+                });
+
+                // Focus handling
+                editing.addEventListener('focus', function () {
+                    setTimeout(function () {
+                        window.scrollTo(0, 0);
+                        editing.scrollIntoView(false);
+                    }, 50);
+                });
+
+                // Force redraw on rotation
+                window.addEventListener('orientationchange', function () {
+                    setTimeout(function () {
+                        autoResizeTextarea();
+                        editing.scrollIntoView(false);
+                    }, 200);
+                });
+            }
+        }
+
+
+
+        // Initialize
+        async function initialize() {
+            handleMobileKeyboard();
+            editing.focus();
+            autoResizeTextarea();
+            updateLineNumbers(editing.value);
+
+            // Initialize Hako runtime
+            await initializeHako();
+        }
+
+        // Update line numbers
+        function updateLineNumbers(text) {
+            const lines = text.split("\n");
+            const count = lines.length;
+
+            let lineNumbersHTML = "";
+            for (let i = 1; i <= count; i++) {
+                lineNumbersHTML += i + "<br>";
+            }
+            lineNumbers.innerHTML = lineNumbersHTML;
+        }
+
+        // Auto-resize textarea and highlighting area
+        function autoResizeTextarea() {
+            editing.style.height = "auto";
+            const newHeight = Math.max(24, editing.scrollHeight) + "px";
+            editing.style.height = newHeight;
+            highlighting.style.height = newHeight;
+
+            // On mobile, make sure input is visible
+            if (window.innerWidth <= 768) {
+                setTimeout(function () {
+                    editing.scrollIntoView(false);
+                }, 0);
+            }
+        }
+
+        // Update syntax highlighting
+        function update(text) {
+            // Add a space at the end of the last line if it ends with a newline
+            if (text[text.length - 1] == "\n") {
+                text += " ";
+            }
+
+            // Escape HTML to prevent XSS
+            highlightingContent.innerHTML = text
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;");
+
+            // Apply Prism.js highlighting
+            Prism.highlightElement(highlightingContent);
+
+            // Update line numbers
+            updateLineNumbers(text);
+        }
+
+        // Helper to escape HTML
+        function escapeHTML(str) {
+            return String(str)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        // Format output based on type
+        function formatValue(value) {
+            if (value === undefined) {
+                return '<span class="type-undefined">undefined</span>';
+            }
+
+            if (value === null) {
+                return '<span class="type-null">null</span>';
+            }
+
+            const type = typeof value;
+
+            if (type === "string") {
+                return (
+                    '<span class="type-string">"' +
+                    escapeHTML(value) +
+                    '"</span>'
+                );
+            }
+
+            if (type === "number") {
+                return '<span class="type-number">' + value + "</span>";
+            }
+
+            if (type === "boolean") {
+                return '<span class="type-boolean">' + value + "</span>";
+            }
+
+            if (type === "function") {
+                // Format function more nicely
+                let funcStr = Function.prototype.toString.call(value);
+                // Truncate long functions
+                if (funcStr.length > 500) {
+                    funcStr = funcStr.substring(0, 500) + "...";
+                }
+                return (
+                    '<span class="type-function">' +
+                    escapeHTML(funcStr) +
+                    "</span>"
+                );
+            }
+
+            if (type === "object") {
+                try {
+                    return formatObject(value);
+                } catch (e) {
+                    return '<span class="type-object">[Object]</span>';
+                }
+            }
+
+            return escapeHTML(String(value));
+        }
+
+        // Format object with syntax highlighting
+        function formatObject(obj) {
+            if (Array.isArray(obj)) {
+                if (obj.length === 0)
+                    return '<span class="obj-bracket">[]</span>';
+
+                let result = '<span class="obj-bracket">[</span>\n';
+
+                obj.forEach((item, index) => {
+                    result += "  " + formatValue(item);
+                    if (index < obj.length - 1) {
+                        result += '<span class="obj-comma">,</span>\n';
+                    } else {
+                        result += "\n";
+                    }
+                });
+
+                result += '<span class="obj-bracket">]</span>';
+                return result;
+            }
+
+            const keys = Object.keys(obj);
+
+            if (keys.length === 0)
+                return '<span class="obj-brace">{}</span>';
+
+            let result = '<span class="obj-brace">{</span>\n';
+
+            keys.forEach((key, index) => {
+                result +=
+                    '  <span class="obj-key">' +
+                    escapeHTML(key) +
+                    '</span><span class="obj-colon">: </span>' +
+                    formatValue(obj[key]);
+                if (index < keys.length - 1) {
+                    result += '<span class="obj-comma">,</span>\n';
+                } else {
+                    result += "\n";
+                }
+            });
+
+            result += '<span class="obj-brace">}</span>';
+            return result;
+        }
+
+        // Sync scroll between textarea and highlighting pre
+        function syncScroll() {
+            highlighting.scrollTop = editing.scrollTop;
+            highlighting.scrollLeft = editing.scrollLeft;
+        }
+
+        // Handle Tab key in the textarea
+        function checkTab(event) {
+            if (event.key === "Tab") {
+                event.preventDefault();
+
+                const start = editing.selectionStart;
+                const end = editing.selectionEnd;
+
+                // Insert tab at cursor position
+                editing.value =
+                    editing.value.substring(0, start) +
+                    "  " +
+                    editing.value.substring(end);
+
+                // Move cursor after the inserted tab
+                editing.selectionStart = editing.selectionEnd = start + 2;
+
+                // Update highlighting and resize
+                update(editing.value);
+                autoResizeTextarea();
+            }
+        }
+
+        // Handle history navigation with arrow keys
+        function handleArrowKeys(event) {
+            // Only handle up/down arrows when input is empty or we're already navigating history
+            if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+                // If this is the first arrow press and there's content, save it first
+                if (historyIndex === -1 && editing.value.trim() !== "") {
+                    tempCommand = editing.value;
+                }
+
+                if (event.key === "ArrowUp") {
+                    // Navigate backwards in history (older commands)
+                    if (historyIndex < commandHistory.length - 1) {
+                        historyIndex++;
+                        editing.value =
+                            commandHistory[
+                            commandHistory.length - 1 - historyIndex
+                            ];
+
+                        // Place cursor at the end
+                        setTimeout(() => {
+                            editing.selectionStart = editing.selectionEnd =
+                                editing.value.length;
+                        }, 0);
+
+                        update(editing.value);
+                        autoResizeTextarea();
+                    }
+                    event.preventDefault();
+                } else if (event.key === "ArrowDown") {
+                    // Navigate forwards in history (newer commands)
+                    if (historyIndex > 0) {
+                        historyIndex--;
+                        editing.value =
+                            commandHistory[
+                            commandHistory.length - 1 - historyIndex
+                            ];
+                    } else if (historyIndex === 0) {
+                        // Return to the temporary stored command
+                        historyIndex = -1;
+                        editing.value = tempCommand;
+                        tempCommand = "";
+                    }
+
+                    // Place cursor at the end
+                    setTimeout(() => {
+                        editing.selectionStart = editing.selectionEnd =
+                            editing.value.length;
+                    }, 0);
+
+                    update(editing.value);
+                    autoResizeTextarea();
+                    event.preventDefault();
+                }
+            }
+        }
+
+        // Store console outputs that occur outside of code execution
+        const pendingConsoleOutputs = [];
+
+        // Add console output to the terminal or the pending queue
+        function addConsoleOutput(output) {
+            pendingConsoleOutputs.push(output);
+        }
+
+        // Display pending console outputs in the current entry
+        function displayPendingConsoleOutputs(entry) {
+            if (pendingConsoleOutputs.length > 0) {
+                const consoleOutput = document.createElement("div");
+                consoleOutput.style.marginTop = "8px";
+                consoleOutput.style.marginBottom = "8px";
+                consoleOutput.style.paddingLeft = "16px";
+                consoleOutput.style.borderLeft = "2px solid #444";
+
+                pendingConsoleOutputs.forEach((output) => {
+                    const logLine = document.createElement("div");
+                    logLine.className = `console-${output.type}`;
+
+                    const formattedArgs = output.args
+                        .map((arg) => formatValue(arg))
+                        .join(" ");
+                    logLine.innerHTML = formattedArgs;
+
+                    consoleOutput.appendChild(logLine);
+                });
+
+                entry.appendChild(consoleOutput);
+
+                // Clear pending outputs
+                pendingConsoleOutputs.length = 0;
+            }
+        }
+
+        // Add an error entry to the terminal
+        function addErrorEntry(message) {
+            const errorEntry = document.createElement("div");
+            errorEntry.className = "entry";
+
+            const errorLine = document.createElement("div");
+            errorLine.className = "line";
+
+            const errorPrompt = document.createElement("div");
+            errorPrompt.className = "prompt";
+            errorPrompt.textContent = "!";
+
+            const errorContent = document.createElement("div");
+            errorContent.className = "content error";
+            errorContent.textContent = message;
+
+            errorLine.appendChild(errorPrompt);
+            errorLine.appendChild(errorContent);
+            errorEntry.appendChild(errorLine);
+            terminal.appendChild(errorEntry);
+        }
+
+        function formatStackTrace(stack, originalCode) {
+            // Split the stack into lines
+            const lines = stack.split("\n");
+            let formattedStack = "";
+
+            // Highlight lines from the evaluated code
+            lines.forEach((line) => {
+                // Look for references to the evaluated code
+                const evalMatch = line.match(
+                    /at <eval> \(file:\/\/eval:(\d+):(\d+)\)/,
+                );
+
+                if (evalMatch) {
+                    const lineNum = parseInt(evalMatch[1], 10);
+                    const colNum = parseInt(evalMatch[2], 10);
+
+                    // Add the original line with error location highlighted
+                    const codeLines = originalCode.split("\n");
+                    if (lineNum <= codeLines.length) {
+                        const errorLine = codeLines[lineNum - 1];
+
+                        // Create a highlighted version of the line
+                        let highlightedLine = "";
+
+                        if (colNum <= errorLine.length) {
+                            // Add the code before the error position
+                            highlightedLine += escapeHTML(
+                                errorLine.substring(0, colNum - 1),
+                            );
+                            // Add a marker for the error position
+                            highlightedLine +=
+                                '<span style="background-color: #cc6666; color: #fff; font-weight: bold;">';
+                            highlightedLine += escapeHTML(
+                                errorLine.substring(colNum - 1, colNum),
+                            );
+                            highlightedLine += "</span>";
+                            // Add the rest of the line
+                            highlightedLine += escapeHTML(
+                                errorLine.substring(colNum),
+                            );
+                        } else {
+                            // If column is beyond line length, just show the line
+                            highlightedLine = escapeHTML(errorLine);
+                        }
+
+                        // Add line number and highlighted code
+                        formattedStack += `<span style="color: #666;">${lineNum}:</span> ${highlightedLine}\n`;
+
+                        // Add a pointer to the error location
+                        let pointer = " ".repeat(
+                            lineNum.toString().length + 2,
+                        );
+                        pointer +=
+                            " ".repeat(colNum - 1) +
+                            '<span style="color: #ff9999; font-weight: bold;">^</span>\n';
+                        formattedStack += pointer;
+                    }
+                }
+
+                // Add the stack line with improved formatting
+                formattedStack += formatStackLine(line) + "\n";
+            });
+
+            return formattedStack;
+        }
+
+        function formatStackLine(line) {
+            // Highlight different parts of the stack trace
+            return line
+                .replace(
+                    /at (.*?) \((.*?)\)/,
+                    'at <span style="color: #81a2be;">$1</span> (<span style="color: #b5bd68;">$2</span>)',
+                )
+                .replace(
+                    /at (.*?)$/,
+                    'at <span style="color: #81a2be;">$1</span>',
+                )
+                .replace(
+                    /file:\/\/eval:(\d+):(\d+)/,
+                    'eval:<span style="color: #f0c674;">$1</span>:<span style="color: #f0c674;">$2</span>',
+                );
+        }
+
+        // Process code input with Hako
+        async function processCode() {
+            if (!context || !runtime) {
+                // Show error if Hako is not initialized
+                addErrorEntry(
+                    "Hako runtime is not initialized or available.",
+                );
+                return;
+            }
+
+            const code = editing.value;
+            if (!code.trim()) return;
+
+            // Add command to history if it's not empty and not the same as the last one
+            if (
+                code.trim() !== "" &&
+                (commandHistory.length === 0 ||
+                    commandHistory[commandHistory.length - 1] !== code)
+            ) {
+                commandHistory.push(code);
+
+                // Keep history at a reasonable size (e.g., 100 items)
+                if (commandHistory.length > 100) {
+                    commandHistory.shift();
+                }
+            }
+
+            // Reset history navigation
+            historyIndex = -1;
+            tempCommand = "";
+
+            // Clear pending console outputs
+            pendingConsoleOutputs.length = 0;
+
+            // Create a new entry
+            const entry = document.createElement("div");
+            entry.className = "entry";
+
+            // Create a new input line with the entered code that includes line numbers
+            const inputContainer = document.createElement("div");
+            inputContainer.className = "line";
+            inputContainer.style.display = "flex";
+
+            const inputPrompt = document.createElement("div");
+            inputPrompt.className = "prompt";
+            inputPrompt.textContent = ">";
+
+            // Create line numbers container
+            const codeWithLineNumbers = document.createElement("div");
+            codeWithLineNumbers.style.display = "flex";
+            codeWithLineNumbers.style.flex = "1";
+
+            // Add line numbers
+            const lines = code.split("\n");
+            const lineNumbersDiv = document.createElement("div");
+            lineNumbersDiv.className = "line-numbers";
+            lineNumbersDiv.style.marginRight = "8px";
+            lineNumbersDiv.style.color = "#666";
+            lineNumbersDiv.style.textAlign = "right";
+            lineNumbersDiv.style.userSelect = "none";
+            lineNumbersDiv.style.minWidth = "30px";
+
+            let lineNumbersHTML = "";
+            for (let i = 1; i <= lines.length; i++) {
+                lineNumbersHTML += i + "<br>";
+            }
+            lineNumbersDiv.innerHTML = lineNumbersHTML;
+
+            // Add code content
+            const inputContent = document.createElement("div");
+            inputContent.className = "content input-content";
+            inputContent.style.flex = "1";
+            inputContent.textContent = code;
+
+            // Add them all to the container
+            codeWithLineNumbers.appendChild(lineNumbersDiv);
+            codeWithLineNumbers.appendChild(inputContent);
+
+            inputContainer.appendChild(inputPrompt);
+            inputContainer.appendChild(codeWithLineNumbers);
+
+            entry.appendChild(inputContainer);
+
+            // Create output line
+            const outputLine = document.createElement("div");
+            outputLine.className = "line";
+
+            const outputPrompt = document.createElement("div");
+            outputPrompt.className = "prompt";
+            outputPrompt.textContent = "<";
+
+            const outputContent = document.createElement("div");
+            outputContent.className = "content";
+
+            // Execute code with Hako and format output
+            try {
+                // Execute the code with Hako
+                const result = context.evalCode(code);
+
+                // If this is a promise, handle it
+                let jsValue;
+                if (result.unwrap().isPromise()) {
+                    outputContent.innerHTML =
+                        '<span class="type-object">Promise</span>';
+
+                    // Add a pending status
+                    const pendingLine = document.createElement("div");
+                    pendingLine.className = "line";
+                    pendingLine.style.opacity = "0.7";
+
+                    const pendingPrompt = document.createElement("div");
+                    pendingPrompt.className = "prompt";
+                    pendingPrompt.textContent = "!";
+
+                    const pendingContent = document.createElement("div");
+                    pendingContent.className = "content";
+                    pendingContent.innerHTML = "Promise pending...";
+
+                    pendingLine.appendChild(pendingPrompt);
+                    pendingLine.appendChild(pendingContent);
+
+                    // Try to resolve the promise
+                    try {
+                        const promiseResult = await context.resolvePromise(
+                            result.unwrap(),
+                        );
+
+                        // If the promise was resolved
+                        if (!promiseResult.error) {
+                            pendingContent.innerHTML = "Promise fulfilled:";
+
+                            // Create a result line for the promise value
+                            const promiseValueLine =
+                                document.createElement("div");
+                            promiseValueLine.className = "line";
+
+                            const promiseValuePrompt =
+                                document.createElement("div");
+                            promiseValuePrompt.className = "prompt";
+                            promiseValuePrompt.textContent = "=";
+
+                            const promiseValueContent =
+                                document.createElement("div");
+                            promiseValueContent.className = "content";
+
+                            // Convert to JS value
+                            const jsPromiseValue = promiseResult
+                                .unwrap()
+                                .toNativeValue().value;
+                            promiseValueContent.innerHTML =
+                                formatValue(jsPromiseValue);
+
+                            promiseValueLine.appendChild(
+                                promiseValuePrompt,
+                            );
+                            promiseValueLine.appendChild(
+                                promiseValueContent,
+                            );
+
+                            entry.appendChild(pendingLine);
+                            entry.appendChild(promiseValueLine);
+                        } else {
+                            // If the promise was rejected
+                            pendingContent.innerHTML = "Promise rejected:";
+
+                            // Create an error line for the rejection
+                            const rejectionLine =
+                                document.createElement("div");
+                            rejectionLine.className = "line";
+
+                            const rejectionPrompt =
+                                document.createElement("div");
+                            rejectionPrompt.className = "prompt";
+                            rejectionPrompt.textContent = "!";
+
+                            const rejectionContent =
+                                document.createElement("div");
+                            rejectionContent.className = "content error";
+
+                            const error = context.getLastError(
+                                promiseResult.error,
+                            );
+                            rejectionContent.innerHTML = escapeHTML(
+                                error?.message || "Unknown error",
+                            );
+
+                            rejectionLine.appendChild(rejectionPrompt);
+                            rejectionLine.appendChild(rejectionContent);
+
+                            entry.appendChild(pendingLine);
+                            entry.appendChild(rejectionLine);
+                        }
+                    } catch (error) {
+                        // Error resolving promise
+                        pendingContent.innerHTML =
+                            "Error resolving promise:";
+
+                        // Create an error line
+                        const errorLine = document.createElement("div");
+                        errorLine.className = "line";
+
+                        const errorPrompt = document.createElement("div");
+                        errorPrompt.className = "prompt";
+                        errorPrompt.textContent = "!";
+
+                        const errorContent = document.createElement("div");
+                        errorContent.className = "content error";
+                        errorContent.innerHTML = escapeHTML(
+                            error.toString(),
+                        );
+
+                        errorLine.appendChild(errorPrompt);
+                        errorLine.appendChild(errorContent);
+
+                        entry.appendChild(pendingLine);
+                        entry.appendChild(errorLine);
+                    }
+                } else {
+                    // For non-promise results
+                    if (result.error) {
+                        // Handle error
+                        const error = context.getLastError(result.error);
+
+                        outputContent.innerHTML =
+                            '<span class="error">' +
+                            escapeHTML(error?.message || "Unknown error") +
+                            "</span>";
+                    } else {
+                        // Handle success
+                        jsValue = result.unwrap().toNativeValue().value;
+                        outputContent.innerHTML = formatValue(jsValue);
+                    }
+                }
+            } catch (error) {
+                // Native JS error (not from Hako)
+                outputContent.innerHTML =
+                    '<span class="error">' +
+                    escapeHTML(error.toString()) +
+                    "</span>";
+
+                // Check if we have a stack trace available
+                if (error.jsError && error.jsError.stack) {
+                    // Format the stack trace
+                    const formattedStack = formatStackTrace(
+                        error.jsError.stack,
+                        code,
+                    );
+
+                    // Add the formatted stack trace to the output
+                    const stackTraceDiv = document.createElement("div");
+                    stackTraceDiv.className = "stack-trace";
+                    stackTraceDiv.style.marginTop = "8px";
+                    stackTraceDiv.style.fontFamily =
+                        '"Fira Code", monospace';
+                    stackTraceDiv.style.whiteSpace = "pre-wrap";
+                    stackTraceDiv.style.color = "#cc6666";
+                    stackTraceDiv.innerHTML = formattedStack;
+
+                    outputContent.appendChild(stackTraceDiv);
+                }
+            } finally {
+                // Run any pending jobs (like promises)
+                runtime.executePendingJobs();
+
+                // Display pending console outputs
+                displayPendingConsoleOutputs(entry);
+            }
+
+            // Add output line to entry
+            outputLine.appendChild(outputPrompt);
+            outputLine.appendChild(outputContent);
+            entry.appendChild(outputLine);
+
+            // Add the entry to the terminal
+            terminal.appendChild(entry);
+
+            // Clear input and resize
+            editing.value = "";
+            update("");
+            autoResizeTextarea();
+
+            // Scroll to bottom
+            terminal.scrollTop = terminal.scrollHeight;
+
+            // Focus input
+            editing.focus();
+        }
+
+        // Add welcome message
+        function addWelcomeMessage() {
+            const welcomeEntry = document.createElement("div");
+            welcomeEntry.className = "entry";
+
+            const welcomeLine = document.createElement("div");
+            welcomeLine.className = "line";
+
+            const welcomePrompt = document.createElement("div");
+            welcomePrompt.className = "prompt";
+            welcomePrompt.textContent = "#";
+
+            const welcomeContent = document.createElement("div");
+            welcomeContent.className = "content console-info";
+
+            // Get build info
+            const buildInfo = runtime.build;
+
+            // Basic welcome text
+            let welcomeText = `Hako JavaScript REPL <span class="type-string">${buildInfo.version}</span>\n`;
+            welcomeText +=
+                "Enter JavaScript and press Enter to evaluate in a Hako VM.\n";
+            welcomeText +=
+                "Use Shift+Enter for multi-line input. Press Ctrl+L to clear.\n";
+            welcomeText +=
+                "Use Up/Down arrows to navigate command history.\n";
+            welcomeText += `<a href="https://github.com/andrewmd5/hako" style="color: #81a2be; text-decoration: underline;">GitHub Repository</a>\n\n`;
+
+            // Add build information
+            welcomeText += formatBuildInfo(buildInfo);
+
+            welcomeContent.innerHTML = welcomeText;
+            welcomeLine.appendChild(welcomePrompt);
+            welcomeLine.appendChild(welcomeContent);
+
+            welcomeEntry.appendChild(welcomeLine);
+            terminal.appendChild(welcomeEntry);
+        }
+
+        // Format build information in a nice way
+        function formatBuildInfo(buildInfo) {
+            let result =
+                '<span class="type-object">Hako Build Info:</span>\n';
+
+            // Version and build date
+            result += `  <span class="obj-key">Version</span><span class="obj-colon">: </span><span class="type-string">${buildInfo.version}</span>\n`;
+            result += `  <span class="obj-key">Build Date</span><span class="obj-colon">: </span><span class="type-string">${buildInfo.buildDate}</span>\n`;
+
+            // Build configuration
+            result +=
+                '  <span class="obj-key">Configuration</span><span class="obj-colon">: </span>';
+
+            // Format flags as feature list
+            const features = [];
+            if (buildInfo.isDebug) features.push("Debug");
+            if (buildInfo.hasSanitizer) features.push("Sanitizer");
+            if (buildInfo.hasBignum) features.push("Bignum");
+            if (buildInfo.hasLepusNG) features.push("LepusNG");
+            if (buildInfo.hasDebugger) features.push("Debugger");
+            if (buildInfo.hasSnapshot) features.push("Snapshot");
+            if (buildInfo.hasCompatibleMM) features.push("Compatible MM");
+            if (buildInfo.hasNanbox) features.push("Nanbox");
+            if (buildInfo.hasCodeCache) features.push("Code Cache");
+            if (buildInfo.hasCacheProfile) features.push("Cache Profile");
+            if (buildInfo.hasMemDetection)
+                features.push("Memory Detection");
+            if (buildInfo.hasAtomics) features.push("Atomics");
+            if (buildInfo.hasForceGC) features.push("Force GC");
+            if (buildInfo.hasLynxSimplify) features.push("Lynx Simplify");
+            if (buildInfo.hasBuiltinSerialize)
+                features.push("Builtin Serialize");
+            if (buildInfo.hasHakoProfiler) features.push("Hako Profiler");
+
+            // Format features list
+            if (features.length > 0) {
+                result += features
+                    .map((f) => `<span class="type-string">${f}</span>`)
+                    .join(", ");
+            } else {
+                result += '<span class="type-string">Standard</span>';
+            }
+
+            // Add compiler info
+            result +=
+                '\n  <span class="obj-key">LLVM</span><span class="obj-colon">: </span>';
+            result += `<span class="type-string">${buildInfo.llvm} ${buildInfo.llvmVersion}</span>\n`;
+
+            // Add WASI info
+            result +=
+                '  <span class="obj-key">WASI</span><span class="obj-colon">: </span>';
+            result += `<span class="type-string">${buildInfo.wasiSdkVersion} (${buildInfo.wasiLibc})</span>`;
+
+            return result;
+        }
+
+        // Event listeners
+        editing.addEventListener("input", function () {
+            update(this.value);
+            autoResizeTextarea();
+        });
+
+        editing.addEventListener("scroll", syncScroll);
+
+        editing.addEventListener("keydown", function (e) {
+            // Handle up/down arrow keys for history navigation
+            handleArrowKeys(e);
+
+            // Run code with Enter (if not Shift+Enter)
+            if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                processCode();
+            }
+
+            // Handle Tab key
+            checkTab(e);
+
+            // Clear with Ctrl+L
+            if (e.key === "l" && e.ctrlKey) {
+                e.preventDefault();
+
+                context.release();
+                context = runtime.createContext();
+                // Clear terminal content
+                terminal.innerHTML = "";
+
+                // Add welcome message back
+                addWelcomeMessage();
+            }
+        });
+
+        // Initialize the REPL
+        await initialize();
+    </script>
+</body>
+
+</html>

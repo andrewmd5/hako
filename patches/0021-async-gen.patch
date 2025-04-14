@@ -1,0 +1,111 @@
+From 13c07a2a012895962daec163d8b176060317a207 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 8 Apr 2025 10:05:09 +0900
+Subject: [PATCH] async generator fixes
+
+- Fix AsyncGenerator.prototype.return error handling
+- raise an error if a private method is added twice to an object
+---
+ src/interpreter/quickjs/source/quickjs.cc | 43 ++++++++++++++++++-----
+ 1 file changed, 34 insertions(+), 9 deletions(-)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index c4e39dc..91e71c9 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -7797,6 +7797,12 @@ int JS_AddBrand(LEPUSContext *ctx, LEPUSValueConst obj,
+     return -1;
+   }
+   p1 = LEPUS_VALUE_GET_OBJ(obj);
++  prs = find_own_property(&pr, p1, brand_atom);
++  if (unlikely(prs)) {
++      LEPUS_FreeAtom(ctx, brand_atom);
++      LEPUS_ThrowTypeError(ctx, "private method is already present");
++      return -1;
++  }
+   pr = add_property(ctx, p1, brand_atom, LEPUS_PROP_C_W_E);
+   LEPUS_FreeAtom(ctx, brand_atom);
+   if (!pr) return -1;
+@@ -19498,7 +19504,14 @@ QJS_STATIC int js_async_generator_completed_return(LEPUSContext *ctx,
+ 
+   promise = js_promise_resolve(ctx, ctx->promise_ctor, 1,
+                                (LEPUSValueConst *)&value, 0);
+-  if (LEPUS_IsException(promise)) return -1;
++  if (LEPUS_IsException(promise)) {
++        LEPUSValue err = LEPUS_GetException(ctx);
++        promise = js_promise_resolve(ctx, ctx->promise_ctor, 1, (LEPUSValueConst *)&err,
++                                     /*is_reject*/ 1);
++        LEPUS_FreeValue(ctx, err);
++        if (LEPUS_IsException(promise))
++            return -1;
++  }
+   if (js_async_generator_resolve_function_create(
+           ctx, LEPUS_MKPTR(LEPUS_TAG_OBJECT, s->generator), resolving_funcs1,
+           TRUE)) {
+@@ -19542,7 +19555,7 @@ QJS_STATIC void js_async_generator_resume_next(LEPUSContext *ctx,
+         } else if (next->completion_type == GEN_MAGIC_RETURN) {
+           s->state = JS_ASYNC_GENERATOR_STATE_AWAITING_RETURN;
+           js_async_generator_completed_return(ctx, s, next->result);
+-          goto done;
++
+         } else {
+           js_async_generator_reject(ctx, s, next->result);
+         }
+@@ -19573,7 +19586,7 @@ QJS_STATIC void js_async_generator_resume_next(LEPUSContext *ctx,
+           js_async_generator_reject(ctx, s, value);
+           LEPUS_FreeValue(ctx, value);
+         } else if (LEPUS_VALUE_IS_INT(func_ret)) {
+-          int func_ret_code;
++          int func_ret_code, ret;
+           value = s->func_state.frame.cur_sp[-1];
+           s->func_state.frame.cur_sp[-1] = LEPUS_UNDEFINED;
+           func_ret_code = LEPUS_VALUE_GET_INT(func_ret);
+@@ -19588,8 +19601,13 @@ QJS_STATIC void js_async_generator_resume_next(LEPUSContext *ctx,
+               LEPUS_FreeValue(ctx, value);
+               break;
+             case FUNC_RET_AWAIT:
+-              js_async_generator_await(ctx, s, value);
++              ret = js_async_generator_await(ctx, s, value);
+               LEPUS_FreeValue(ctx, value);
++              if (ret < 0) {
++                  /* exception: throw it */
++                  s->func_state.throw_flag = TRUE;
++                  goto resume_exec;
++              }
+               goto done;
+             default:
+               abort();
+@@ -24974,6 +24992,18 @@ void emit_return(JSParseState *s, BOOL hasval) {
+   BlockEnv *top;
+   int drop_count;
+ 
++  if (s->cur_func->func_kind != JS_FUNC_NORMAL) {
++        if (!hasval) {
++            /* no value: direct return in case of async generator */
++            emit_op(s, OP_undefined);
++            hasval = TRUE;
++        } else if (s->cur_func->func_kind == JS_FUNC_ASYNC_GENERATOR) {
++            /* the await must be done before handling the "finally" in
++               case it raises an exception */
++            emit_op(s, OP_await);
++        }
++  }
++
+   drop_count = 0;
+   top = s->cur_func->top_break;
+   while (top != NULL) {
+@@ -25037,11 +25067,6 @@ void emit_return(JSParseState *s, BOOL hasval) {
+     emit_label(s, label_return);
+     emit_op(s, OP_return);
+   } else if (s->cur_func->func_kind != JS_FUNC_NORMAL) {
+-    if (!hasval) {
+-      emit_op(s, OP_undefined);
+-    } else if (s->cur_func->func_kind == JS_FUNC_ASYNC_GENERATOR) {
+-      emit_op(s, OP_await);
+-    }
+     emit_op(s, OP_return_async);
+   } else {
+     emit_op(s, hasval ? OP_return : OP_return_undef);
+-- 
+2.39.5 (Apple Git-154)
+

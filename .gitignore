@@ -1,1 +1,15 @@
 .DS_Store
+bridge/build
+bridge/.cache
+bridge/version.h
+bridge/wasi_version.h
+dist
+node_modules
+*.wasm
+.vscode
+bun.lock
+hako.sln
+*.g.ts
+obj
+bin
+tools/third-party

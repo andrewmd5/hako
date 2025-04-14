@@ -1,0 +1,592 @@
+From eb966cefe2b55d6497e53b98227dd8c8dd70f169 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 8 Apr 2025 19:13:46 +0900
+Subject: [PATCH] Added  Uint8Array.prototype.toBase64 and 
+ Uint8Array.fromBase64
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 554 ++++++++++++++++++++++
+ 1 file changed, 554 insertions(+)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index a5fd684..14a7d62 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -53730,6 +53730,553 @@ exception:
+   return LEPUS_EXCEPTION;
+ }
+ 
++static const char base64_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
++static const char base64url_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
++/**
++ * Encode the given binary data into a Base64 (or Base64URL) null‑terminated string.
++ *
++ * @param data         Pointer to the input data.
++ * @param byte_len     The length (in bytes) of the input data.
++ * @param alphabet     A C-string that should be "base64" or "base64url"; selects the variant.
++ * @param omitPadding  If true, do not emit '=' padding characters.
++ * @return             A newly allocated null‑terminated string containing the Base64 encoding.
++ *                     The caller is responsible for freeing the returned memory.
++ * @note we can probably replace this with a faster alternative at some point
++ */
++QJS_STATIC char *encode_base64_internal(LEPUSContext *ctx, const uint8_t *data, size_t byte_len,
++                             const char *alphabet, bool omitPadding)
++{
++  size_t full_groups = byte_len / 3;
++  size_t remainder = byte_len % 3;
++  size_t out_len = full_groups * 4;
++
++  if (remainder == 1)
++  {
++    out_len += (omitPadding ? 2 : 4);
++  }
++  else if (remainder == 2)
++  {
++    out_len += (omitPadding ? 3 : 4);
++  }
++
++  /* Allocate output buffer plus one for the null terminator */
++  char *out = static_cast<char *>(
++      lepus_malloc(ctx, out_len, ALLOC_TAG_WITHOUT_PTR));
++  if (!out)
++    return NULL;
++
++  /* Select encoding table based on the provided alphabet */
++  const char *table = NULL;
++  if (strcmp(alphabet, "base64") == 0)
++  {
++    table = base64_table;
++  }
++  else if (strcmp(alphabet, "base64url") == 0)
++  {
++    table = base64url_table;
++  }
++  else
++  {
++    /* Should not be reached if alphabet is already validated by the caller. */
++    lepus_free(ctx, out);
++    return NULL;
++  }
++
++  size_t i = 0; /* index in input data */
++  size_t j = 0; /* index in output string */
++
++  /* Process complete groups of 3 bytes -> 4 Base64 characters */
++  for (i = 0; i < full_groups * 3; i += 3)
++  {
++    uint32_t triple = ((uint32_t)data[i] << 16) |
++                      ((uint32_t)data[i + 1] << 8) |
++                      (uint32_t)data[i + 2];
++    out[j++] = table[(triple >> 18) & 0x3F];
++    out[j++] = table[(triple >> 12) & 0x3F];
++    out[j++] = table[(triple >> 6) & 0x3F];
++    out[j++] = table[triple & 0x3F];
++  }
++
++  /* Process the remaining bytes */
++  if (remainder == 1)
++  {
++    uint32_t triple = ((uint32_t)data[i] << 16);
++    out[j++] = table[(triple >> 18) & 0x3F];
++    out[j++] = table[(triple >> 12) & 0x3F];
++    if (!omitPadding)
++    {
++      out[j++] = '=';
++      out[j++] = '=';
++    }
++  }
++  else if (remainder == 2)
++  {
++    uint32_t triple = ((uint32_t)data[i] << 16) |
++                      ((uint32_t)data[i + 1] << 8);
++    out[j++] = table[(triple >> 18) & 0x3F];
++    out[j++] = table[(triple >> 12) & 0x3F];
++    out[j++] = table[(triple >> 6) & 0x3F];
++    if (!omitPadding)
++      out[j++] = '=';
++  }
++
++  /* Null-terminate the output string */
++  out[j] = '\0';
++  return out;
++}
++
++/*
++ * Uint8Array.prototype.toBase64([ options ])
++ *
++ * Steps (per spec):
++ *   1. Let O be the this value.
++ *   2. Perform ? ValidateUint8Array(O).
++ *   3. Let opts be ? GetOptionsObject(options).
++ *   4. Let alphabet be ? Get(opts, "alphabet").
++ *   5. If alphabet is undefined, set alphabet to "base64".
++ *   6. If alphabet is neither "base64" nor "base64url", throw a TypeError exception.
++ *   7. Let omitPadding be ToBoolean(? Get(opts, "omitPadding")).
++ *   8. Let toEncode be ? GetUint8ArrayBytes(O).
++ *   9. Encode toEncode according to the requested variant.
++ *  10. Return CodePointsToString( outAscii ).
++ */
++QJS_STATIC LEPUSValue js_typed_array_toBase64(LEPUSContext *ctx,
++                                              LEPUSValueConst this_val,
++                                              int argc, LEPUSValueConst *argv)
++{
++  // Step 2: Validate that this_val is a Uint8Array.
++  LEPUSObject *p = get_typed_array(ctx, this_val, 0);
++  if (!p || p->class_id != JS_CLASS_UINT8_ARRAY)
++    return LEPUS_ThrowTypeError(ctx, "Not a Uint8Array");
++
++  // Step 3: Get the options object.
++  // (If none is provided, use an empty object with a null prototype.)
++  LEPUSValue opts;
++  if (argc >= 1 && !LEPUS_IsUndefined(argv[0]))
++  {
++    if (LEPUS_VALUE_IS_NOT_OBJECT(argv[0]))
++    {
++      return LEPUS_ThrowTypeError(ctx, "Expected an object for options");
++    }
++    opts = LEPUS_DupValue(ctx, argv[0]);
++  }
++  else
++  {
++    opts = LEPUS_NewObject(ctx);
++  }
++
++  // Step 4 & 5: Get the "alphabet" property; default to "base64"
++  bool allocated_alphabet = false; /* track if we need to free the returned string */
++  const char *alphabet = NULL;
++  {
++    LEPUSValue val = LEPUS_GetPropertyStr(ctx, opts, "alphabet");
++    if (LEPUS_IsUndefined(val))
++    {
++      alphabet = "base64";
++    }
++    else
++    {
++      const char *tmp = LEPUS_ToCString(ctx, val);
++      if (!tmp)
++      {
++        LEPUS_FreeValue(ctx, val);
++        LEPUS_FreeValue(ctx, opts);
++        return LEPUS_EXCEPTION;
++      }
++      // Step 6: Check that tmp is either "base64" or "base64url"
++      if ((strncmp(tmp, "base64", 6) != 0) && (strncmp(tmp, "base64url", 9) != 0))
++      {
++        LEPUS_FreeCString(ctx, tmp);
++        LEPUS_FreeValue(ctx, val);
++        LEPUS_FreeValue(ctx, opts);
++        return LEPUS_ThrowTypeError(ctx, "Invalid alphabet. Expected 'base64' or 'base64url'.");
++      }
++      alphabet = tmp; /* use the dynamically allocated string */
++      allocated_alphabet = true;
++    }
++    LEPUS_FreeValue(ctx, val);
++  }
++
++  // Step 7: Get the "omitPadding" option; default is false.
++  bool omitPadding = false;
++  {
++    LEPUSValue val = LEPUS_GetPropertyStr(ctx, opts, "omitPadding");
++    if (!LEPUS_IsUndefined(val))
++      omitPadding = LEPUS_ToBool(ctx, val);
++    LEPUS_FreeValue(ctx, val);
++  }
++  LEPUS_FreeValue(ctx, opts);
++
++  // Step 8: Get Uint8ArrayBytes.
++  // Use the internal representation: get the element count and compute total byte length.
++  int len = p->u.array.count;
++  int shift = typed_array_size_log2(p->class_id); // element size as a log2 value
++  size_t byte_len = ((size_t)len) << shift;
++  uint8_t *data = p->u.array.u.uint8_ptr;
++
++  // Step 9: Call the conversion helper.
++  char *encoded = encode_base64_internal(ctx, data, byte_len, alphabet, omitPadding);
++
++  // Free the dynamically allocated alphabet string if necessary.
++  if (allocated_alphabet)
++    LEPUS_FreeCString(ctx, alphabet);
++
++  if (!encoded)
++    return LEPUS_ThrowInternalError(ctx, "Base64 encoding failed");
++
++  // Step 10: Return the string containing the encoded code points.
++  LEPUSValue ret = LEPUS_NewString(ctx, encoded);
++  lepus_free(ctx, encoded);
++  return ret;
++}
++
++/**
++ * Decode the given Base64 (or Base64URL) encoded string.
++ *
++ * @param input             Null‑terminated input string.
++ * @param out_bytes         On success, *out_bytes is set to a newly allocated buffer (via lepus_malloc) containing the decoded bytes.
++ *                          The caller is responsible for freeing it with lepus_free().
++ * @param out_len           On success, *out_len is set to the number of decoded bytes.
++ * @param alphabet          Must be "base64" or "base64url".
++ * @param lastChunkHandling Must be "loose", "strict", or "stop-before-partial". (This implementation only supports loose decoding.)
++ * @return                  0 on success; negative on error.
++ */
++QJS_STATIC int decode_base64_internal(LEPUSContext *ctx, const char *input,
++                                      uint8_t **out_bytes, size_t *out_len,
++                                      const char *alphabet, const char *lastChunkHandling)
++{
++  int dec_table[256];
++  for (int i = 0; i < 256; i++)
++    dec_table[i] = -1;
++
++  /* Determine the encoding table */
++  const char *enc_table = NULL;
++  if (strcmp(alphabet, "base64") == 0)
++  {
++    extern const char base64_table[]; // defined elsewhere
++    enc_table = base64_table;
++  }
++  else if (strcmp(alphabet, "base64url") == 0)
++  {
++    extern const char base64url_table[]; // defined elsewhere
++    enc_table = base64url_table;
++  }
++  else
++  {
++    return -1; /* Should not happen if caller validated. */
++  }
++  /* Fill the decoding table for the 64 characters. */
++  for (int i = 0; i < 64; i++)
++  {
++    dec_table[(unsigned char)enc_table[i]] = i;
++  }
++  /* '=' is used for padding; we'll check it directly in our loop. */
++
++  /* Step 1: Scan input to determine the effective length by skipping ASCII whitespace.
++     Whitespace characters: TAB, LF, FF, CR, SPACE. */
++  size_t effective_len = 0;
++  for (const char *p = input; *p; p++)
++  {
++    char c = *p;
++    if (c == '\t' || c == '\n' || c == '\f' || c == '\r' || c == ' ')
++      continue;
++    effective_len++;
++  }
++
++  /* Step 2: Allocate a temporary buffer to store non‑whitespace characters.
++     Use lepus_malloc for consistency. */
++  char *buf =  static_cast<char *>(lepus_malloc(ctx, effective_len, ALLOC_TAG_WITHOUT_PTR));
++  if (!buf)
++    return -1;
++
++  size_t j = 0;
++  for (const char *p = input; *p; p++)
++  {
++    char c = *p;
++    if (c == '\t' || c == '\n' || c == '\f' || c == '\r' || c == ' ')
++      continue;
++    buf[j++] = c;
++  }
++  /* At this point, effective length equals j. */
++  effective_len = j;
++
++  /* Step 3: Determine groups of 4. */
++  size_t groups = effective_len / 4;
++  size_t rem = effective_len % 4;
++
++  /* According to RFC4648, remainder of 1 is invalid. */
++  if (rem == 1)
++  {
++    lepus_free(ctx, buf);
++    return -1; /* syntax error */
++  }
++
++  /* Maximum decoded length: each full group yields 3 bytes;
++     remainder 2 yields 1 byte, remainder 3 yields 2 bytes. */
++  size_t max_decoded = groups * 3;
++  if (rem == 2)
++    max_decoded += 1;
++  else if (rem == 3)
++    max_decoded += 2;
++
++  uint8_t *decoded = static_cast<uint8_t *>(lepus_malloc(ctx, max_decoded, ALLOC_TAG_WITHOUT_PTR));
++  if (!decoded)
++  {
++    lepus_free(ctx, buf);
++    return -1;
++  }
++
++  size_t decoded_index = 0;
++
++  /* Process all full groups (of 4 characters) */
++  for (size_t g = 0; g < groups; g++)
++  {
++    int vals[4];
++    for (int k = 0; k < 4; k++)
++    {
++      char c = buf[g * 4 + k];
++      if (c == '=')
++      {
++        vals[k] = -1; /* marker for padding */
++      }
++      else
++      {
++        vals[k] = dec_table[(unsigned char)c];
++        if (vals[k] < 0)
++        {
++          lepus_free(NULL, buf);
++          lepus_free(NULL, decoded);
++          return -1; /* invalid character */
++        }
++      }
++    }
++    if (vals[2] == -1)
++    {
++      /* If third character is padding, then fourth must be '='.
++         Decode one byte. */
++      if (vals[3] != -1)
++      {
++        lepus_free(NULL, buf);
++        lepus_free(NULL, decoded);
++        return -1;
++      }
++      uint32_t triple = (vals[0] << 18) | (vals[1] << 12);
++      decoded[decoded_index++] = (triple >> 16) & 0xFF;
++    }
++    else if (vals[3] == -1)
++    {
++      /* One pad: decode two bytes. */
++      uint32_t triple = (vals[0] << 18) | (vals[1] << 12) | (vals[2] << 6);
++      decoded[decoded_index++] = (triple >> 16) & 0xFF;
++      decoded[decoded_index++] = (triple >> 8) & 0xFF;
++    }
++    else
++    {
++      /* Full group: decode 3 bytes. */
++      uint32_t triple = (vals[0] << 18) | (vals[1] << 12) | (vals[2] << 6) | (vals[3]);
++      decoded[decoded_index++] = (triple >> 16) & 0xFF;
++      decoded[decoded_index++] = (triple >> 8) & 0xFF;
++      decoded[decoded_index++] = triple & 0xFF;
++    }
++  }
++
++  /* Process any remaining characters if rem > 0 (this is the last group) */
++  if (rem > 0)
++  {
++    /* For rem == 2 or 3, only "loose" mode is supported in this implementation.
++       In "loose" mode we allow a partial group:
++         - 2 characters yield 1 byte,
++         - 3 characters yield 2 bytes.
++       For other modes, you might add stricter checks.
++    */
++    int vals[4] = {0, 0, 0, 0};
++    for (size_t k = 0; k < rem; k++)
++    {
++      char c = buf[groups * 4 + k];
++      if (c == '=')
++      {
++        vals[k] = -1;
++      }
++      else
++      {
++        vals[k] = dec_table[(unsigned char)c];
++        if (vals[k] < 0)
++        {
++          lepus_free(NULL, buf);
++          lepus_free(NULL, decoded);
++          return -1;
++        }
++      }
++    }
++    /* Fill missing positions as padding */
++    for (size_t k = rem; k < 4; k++)
++    {
++      vals[k] = -1;
++    }
++    if (rem == 2)
++    {
++      uint32_t triple = (vals[0] << 18) | (vals[1] << 12);
++      decoded[decoded_index++] = (triple >> 16) & 0xFF;
++    }
++    else if (rem == 3)
++    {
++      uint32_t triple = (vals[0] << 18) | (vals[1] << 12) | (vals[2] << 6);
++      decoded[decoded_index++] = (triple >> 16) & 0xFF;
++      decoded[decoded_index++] = (triple >> 8) & 0xFF;
++    }
++  }
++
++  lepus_free(ctx, buf);
++
++  *out_bytes = decoded;
++  *out_len = decoded_index;
++  return 0;
++}
++
++QJS_STATIC LEPUSValue js_typed_array_fromBase64(LEPUSContext *ctx,
++                                                LEPUSValueConst this_val,
++                                                int argc, LEPUSValueConst *argv)
++{
++  // Step 1: Ensure the first argument is a string.
++  if (argc < 1)
++    return LEPUS_ThrowTypeError(ctx, "fromBase64 requires a string argument");
++  if (!LEPUS_IsString(argv[0]))
++    return LEPUS_ThrowTypeError(ctx, "First argument must be a string");
++
++  const char *input_str = LEPUS_ToCString(ctx, argv[0]);
++  if (!input_str)
++    return LEPUS_EXCEPTION;
++
++  // Step 2: Get the options object.
++  LEPUSValue opts;
++  if (argc >= 2 && !LEPUS_IsUndefined(argv[1]))
++  {
++    if (!LEPUS_VALUE_IS_OBJECT(argv[1]))
++    {
++      LEPUS_FreeCString(ctx, input_str);
++      return LEPUS_ThrowTypeError(ctx, "Expected an object for options");
++    }
++    opts = LEPUS_DupValue(ctx, argv[1]);
++  }
++  else
++  {
++    opts = LEPUS_NewObject(ctx);
++  }
++
++  // Steps 3 & 4: Get "alphabet" property; default to "base64".
++  bool allocated_alphabet = false;
++  const char *alphabet = NULL;
++  {
++    LEPUSValue val = LEPUS_GetPropertyStr(ctx, opts, "alphabet");
++    if (LEPUS_IsUndefined(val))
++    {
++      alphabet = "base64";
++    }
++    else
++    {
++      const char *tmp = LEPUS_ToCString(ctx, val);
++      if (!tmp)
++      {
++        LEPUS_FreeValue(ctx, val);
++        LEPUS_FreeValue(ctx, opts);
++        LEPUS_FreeCString(ctx, input_str);
++        return LEPUS_EXCEPTION;
++      }
++      if ((strncmp(tmp, "base64", 6) != 0) && (strncmp(tmp, "base64url", 9) != 0))
++      {
++        LEPUS_FreeCString(ctx, tmp);
++        LEPUS_FreeValue(ctx, val);
++        LEPUS_FreeValue(ctx, opts);
++        LEPUS_FreeCString(ctx, input_str);
++        return LEPUS_ThrowTypeError(ctx, "Invalid alphabet. Expected 'base64' or 'base64url'.");
++      }
++      alphabet = tmp;
++      allocated_alphabet = true;
++    }
++    LEPUS_FreeValue(ctx, val);
++  }
++
++  // Steps 6-8: Get "lastChunkHandling" property; default to "loose".
++  bool allocated_lastChunk = false;
++  const char *lastChunkHandling = NULL;
++  {
++    LEPUSValue val = LEPUS_GetPropertyStr(ctx, opts, "lastChunkHandling");
++    if (LEPUS_IsUndefined(val))
++    {
++      lastChunkHandling = "loose";
++    }
++    else
++    {
++      const char *tmp = LEPUS_ToCString(ctx, val);
++      if (!tmp)
++      {
++        LEPUS_FreeValue(ctx, val);
++        if (allocated_alphabet)
++          LEPUS_FreeCString(ctx, alphabet);
++        LEPUS_FreeValue(ctx, opts);
++        LEPUS_FreeCString(ctx, input_str);
++        return LEPUS_EXCEPTION;
++      }
++      if ((strncmp(tmp, "loose", 5) != 0) && (strncmp(tmp, "strict", 6) != 0) &&
++          (strncmp(tmp, "stop-before-partial", 19) != 0))
++      {
++        LEPUS_FreeCString(ctx, tmp);
++        LEPUS_FreeValue(ctx, val);
++        if (allocated_alphabet)
++          LEPUS_FreeCString(ctx, alphabet);
++        LEPUS_FreeValue(ctx, opts);
++        LEPUS_FreeCString(ctx, input_str);
++        return LEPUS_ThrowTypeError(ctx, "Invalid lastChunkHandling. Expected 'loose', 'strict', or 'stop-before-partial'.");
++      }
++      lastChunkHandling = tmp;
++      allocated_lastChunk = true;
++    }
++    LEPUS_FreeValue(ctx, val);
++  }
++  LEPUS_FreeValue(ctx, opts);
++
++  // Step 9: Call the Base64 decoding helper.
++  uint8_t *decoded_bytes = NULL;
++  size_t decoded_len = 0;
++  int ret = decode_base64_internal(ctx, input_str, &decoded_bytes, &decoded_len,
++                                   alphabet, lastChunkHandling);
++  LEPUS_FreeCString(ctx, input_str);
++  if (allocated_alphabet)
++    LEPUS_FreeCString(ctx, alphabet);
++  if (allocated_lastChunk)
++    LEPUS_FreeCString(ctx, lastChunkHandling);
++
++  // Step 10: If decoding failed, throw an error.
++  if (ret < 0)
++  {
++    if (decoded_bytes)
++      lepus_free(ctx, decoded_bytes);
++    return LEPUS_ThrowInternalError(ctx, "Base64 decoding failed");
++  }
++
++  // Step 11: resultLength is decoded_len.
++  // Step 12: Allocate a new Uint8Array of length decoded_len.
++  LEPUSValue ta = LEPUS_NewTypedArray(ctx, decoded_len, JS_CLASS_UINT8_ARRAY);
++  if (LEPUS_IsException(ta))
++  {
++    lepus_free(ctx, decoded_bytes);
++    return ta;
++  }
++
++  // Step 13: Copy the decoded bytes into the new Uint8Array.
++  LEPUSObject *ta_obj = get_typed_array(ctx, ta, 0);
++  if (!ta_obj)
++  {
++    lepus_free(ctx, decoded_bytes);
++    return LEPUS_ThrowInternalError(ctx, "Unable to access Uint8Array data");
++  }
++
++  memmove(ta_obj->u.array.u.uint8_ptr, decoded_bytes, decoded_len);
++  lepus_free(ctx, decoded_bytes);
++  // Step 14: Return the new Uint8Array.
++  return ta;
++}
++
+ #define special_indexOf 0
+ #define special_lastIndexOf 1
+ #define special_includes -1
+@@ -54448,6 +54995,7 @@ QJS_STATIC LEPUSValue js_typed_array_sort(LEPUSContext *ctx,
+ static const LEPUSCFunctionListEntry js_typed_array_base_funcs[] = {
+     LEPUS_CFUNC_DEF("from", 1, js_typed_array_from),
+     LEPUS_CFUNC_DEF("of", 0, js_typed_array_of),
++    LEPUS_CFUNC_DEF("fromBase64", 1, js_typed_array_fromBase64),
+     LEPUS_CGETSET_DEF("[Symbol.species]", js_get_this, NULL),
+     // LEPUS_CFUNC_DEF("__getLength", 2, js_typed_array___getLength ),
+     // LEPUS_CFUNC_DEF("__create", 2, js_typed_array___create ),
+@@ -54502,6 +55050,12 @@ static const LEPUSCFunctionListEntry js_typed_array_base_proto_funcs[] = {
+                           special_lastIndexOf),
+     LEPUS_CFUNC_MAGIC_DEF("includes", 1, js_typed_array_indexOf,
+                           special_includes),
++
++    LEPUS_CFUNC_DEF("toBase64", 0, js_typed_array_toBase64),
++   // LEPUS_CFUNC_DEF("toHex", 0, js_typed_array_toHex),
++   // LEPUS_CFUNC_DEF("fromHex", 1, js_typed_array_fromHex),
++   // LEPUS_CFUNC_DEF("setFromBase64", 1, js_typed_array_setFromBase64),
++  //  LEPUS_CFUNC_DEF("setFromHex", 1, js_typed_array_setFromHex),
+     // LEPUS_ALIAS_BASE_DEF("toString", "toString", 2 /* Array.prototype. */),
+     // @@@
+ };
+-- 
+2.39.5 (Apple Git-154)
+

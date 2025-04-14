@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hako VM Dashboard</title>
+    <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+    <header>
+        <h1>Hako VM Dashboard</h1>
+        <div class="system-stats">
+            <div class="stat-item">
+                <span class="stat-label">VMs:</span>
+                <span class="stat-value vm-count">0</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Total Executions:</span>
+                <span class="stat-value total-executions">0</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Uptime:</span>
+                <span class="stat-value system-uptime">0s</span>
+            </div>
+        </div>
+        <div class="key-help">
+            [N] New VM | [DEL] Delete VM | [ESC] Focus | [↑/↓] Navigate
+        </div>
+    </header>
+
+    <main>
+        <div class="dashboard-container">
+            <!-- VM List -->
+            <div class="vm-list" id="vm-list">
+                <!-- VM rows are inserted here by dashboard.js -->
+            </div>
+
+            <!-- Memory Panel -->
+            <div class="memory-panel">
+                <div class="memory-stats-section">
+                    <h3>Memory Usage</h3>
+                    <div class="memory-stat">
+                        <span class="memory-stat-name">Used:</span>
+                        <span class="memory-stat-value memory-used">0 KB</span>
+                    </div>
+                    <div class="memory-stat">
+                        <span class="memory-stat-name">Limit:</span>
+                        <span class="memory-stat-value memory-limit">0 KB</span>
+                    </div>
+                    <div class="memory-stat">
+                        <span class="memory-stat-name">Allocations:</span>
+                        <span class="memory-stat-value memory-count">0</span>
+                    </div>
+                    <div class="memory-stat">
+                        <span class="memory-stat-name">Objects:</span>
+                        <span class="memory-stat-value object-count">0</span>
+                    </div>
+                    <div class="memory-stat">
+                        <span class="memory-stat-name">Strings:</span>
+                        <span class="memory-stat-value string-count">0</span>
+                    </div>
+                    <div class="memory-stat">
+                        <span class="memory-stat-name">Functions:</span>
+                        <span class="memory-stat-value function-count">0</span>
+                    </div>
+                </div>
+
+                <!-- Build Info Section -->
+                <div class="build-info-section">
+                    <h3>Build Info</h3>
+                    <div class="build-info-item">
+                        <span class="build-info-name">Version:</span>
+                        <span class="build-info-value build-version">-</span>
+                    </div>
+                    <div class="build-info-item">
+                        <span class="build-info-name">Date:</span>
+                        <span class="build-info-value build-date">-</span>
+                    </div>
+                    <div class="build-info-item">
+                        <span class="build-info-name">LLVM:</span>
+                        <span class="build-info-value build-llvm">-</span>
+                    </div>
+                    <div class="build-info-item">
+                        <span class="build-info-name">WASI:</span>
+                        <span class="build-info-value build-wasi">-</span>
+                    </div>
+                    <div class="build-features">
+                        <!-- Feature tags are added dynamically -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Terminal Panel -->
+        <div class="terminal-panel">
+            <div class="terminal-header">
+                <div class="terminal-header-title">VM Output Log</div>
+                <div class="terminal-stats">Last exec: 0.00 ms</div>
+            </div>
+            <div class="terminal-history" id="terminal-history">
+                <div class="execution">
+                    <div class="execution-code">
+                        [System] > Welcome to Hako VM Dashboard
+                    </div>
+                    <div class="execution-result">
+                        Press 'N' to create a new VM
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- VM Row Template -->
+    <template id="vm-row-template">
+        <div class="vm-row">
+            <!-- Header (focusable) -->
+            <div class="vm-row-header" tabindex="0">
+                <div class="vm-indicator"></div>
+                <div class="vm-name">VM Name</div>
+                <div class="vm-info">
+                    <div class="vm-executions">Execs: 0</div>
+                    <div class="vm-uptime">0s</div>
+                </div>
+                <div class="execution-bar-container">
+                    <div class="execution-bar"></div>
+                </div>
+                <div class="execution-time">0.00 ms</div>
+                <!-- The Delete button is now removed; deletion is handled by the DEL key -->
+            </div>
+            <!-- Inline Editor (drawer) -->
+            <div class="vm-editor-container">
+                <textarea class="vm-editor"
+                    placeholder="Type code here and press Enter to run (Shift+Enter for newline)"></textarea>
+            </div>
+        </div>
+    </template>
+
+    <script src="dashboard.js"></script>
+</body>
+
+</html>

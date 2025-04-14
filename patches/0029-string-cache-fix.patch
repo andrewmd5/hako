@@ -1,0 +1,33 @@
+From 724da4b63d85d3caaae088ef64a43575511db77e Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Fri, 11 Apr 2025 20:18:36 +0900
+Subject: [PATCH] fix gc-mem leak
+
+---
+ src/interpreter/quickjs/source/quickjs_gc.cc | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/src/interpreter/quickjs/source/quickjs_gc.cc b/src/interpreter/quickjs/source/quickjs_gc.cc
+index 8d29c21..fb901d9 100644
+--- a/src/interpreter/quickjs/source/quickjs_gc.cc
++++ b/src/interpreter/quickjs/source/quickjs_gc.cc
+@@ -1197,6 +1197,16 @@ void JS_FreeRuntime_GC(LEPUSRuntime *rt) {
+ #endif
+ 
+   /* free the atoms */
++#ifdef ENABLE_LEPUSNG
++  for (int i = 0; i < rt->atom_size; i++)
++  {
++    JSAtomStruct *p = rt->atom_array[i];
++    if (!atom_is_free(p))
++    {
++      JS_FreeStringCache(rt, p);
++    }
++  }
++#endif
+   rt->atom_size = 0;
+   rt->atom_array = NULL;
+   rt->atom_hash = NULL;
+-- 
+2.39.5 (Apple Git-154)
+
