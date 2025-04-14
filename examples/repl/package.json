@@ -8,7 +8,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "rollup -c rollup.config.mjs"
+    "build": "rollup -c rollup.config.mjs && mkdir dist/embed && cp embed.html dist/embed/index.html"
   },
   "license": "MIT",
   "devDependencies": {
