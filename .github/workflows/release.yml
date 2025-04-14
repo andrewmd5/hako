@@ -94,7 +94,8 @@ jobs:
           workingDirectory: examples/repl
           wranglerVersion: '3'
 
-      #- name: Publish package to NPM
-      #  run: npm publish --provenance --access public --tag latest
-      #  env:
-      #    NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish package to NPM
+        working-directory: embedders/ts
+        run: npm publish --provenance --access public --tag latest
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
