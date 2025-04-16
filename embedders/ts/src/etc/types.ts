@@ -254,71 +254,55 @@ export type ExecutePendingJobsResult = DisposableResult<
 export enum Intrinsic {
   /** Basic object functionality (Object, Function, Array, etc.) */
   BaseObjects = 1 << 0,
-
   /** Date object and related functionality */
   Date = 1 << 1,
-
   /** eval() function and related functionality */
   Eval = 1 << 2,
-
   /** String.prototype.normalize() functionality */
   StringNormalize = 1 << 3,
-
   /** RegExp object and related functionality */
   RegExp = 1 << 4,
-
   /** RegExp compiler functionality */
   RegExpCompiler = 1 << 5,
-
   /** JSON object and related functionality */
   JSON = 1 << 6,
-
   /** Proxy object and related functionality */
   Proxy = 1 << 7,
-
   /** Map and Set objects and related functionality */
   MapSet = 1 << 8,
-
   /** TypedArray objects (Uint8Array, etc.) */
   TypedArrays = 1 << 9,
-
   /** Promise object and related functionality */
   Promise = 1 << 10,
-
   /** BigInt functionality */
   BigInt = 1 << 11,
-
   /** BigFloat functionality (non-standard) */
   BigFloat = 1 << 12,
-
   /** BigDecimal functionality (non-standard) */
   BigDecimal = 1 << 13,
-
   /** Operator overloading functionality (non-standard) */
   OperatorOverloading = 1 << 14,
-
   /** Extended bignum functionality (non-standard) */
   BignumExt = 1 << 15,
+  /** Performance measurement API */
+  Performance = 1 << 16,
 
   // Common sets of features
-
   /** Default set of features for most contexts */
   Default = BaseObjects |
-    Date |
-    Eval |
-    StringNormalize |
-    RegExp |
-    JSON |
-    MapSet |
-    TypedArrays |
-    Promise |
-    BigInt,
-
+  Date |
+  Eval |
+  StringNormalize |
+  RegExp |
+  JSON |
+  MapSet |
+  TypedArrays |
+  Promise |
+  BigInt,
   /** Minimal functionality (only BaseObjects) */
   Basic = BaseObjects,
-
   /** All available features */
-  All = 0xffff,
+  All = 0xfffff,
 }
 
 /**
@@ -373,6 +357,9 @@ export type Intrinsics = {
 
   /** Extended bignum functionality (non-standard) */
   BignumExt?: boolean;
+
+  /** Whether to enable the 'performance' object */
+  Performance?: boolean;
 };
 
 /**
@@ -417,6 +404,7 @@ export function intrinsicsToFlags(intrinsics: Intrinsics): Intrinsic {
   if (intrinsics.BigDecimal) result |= Intrinsic.BigDecimal;
   if (intrinsics.OperatorOverloading) result |= Intrinsic.OperatorOverloading;
   if (intrinsics.BignumExt) result |= Intrinsic.BignumExt;
+  if (intrinsics.Performance) result |= Intrinsic.Performance;
 
   return result as Intrinsic;
 }
