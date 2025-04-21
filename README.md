@@ -58,4 +58,4 @@ This project is still in early access - documentation is a work in progress, and
 
 You can find the intitial reference implementation of Hako in TypeScript [here](./embedders/ts/README.md).
 
-For further reading and to get a sense of the roadmap see the initial blog post [here](https://andrewmd5.com/posts/2023-10-01-hako/).
+For further reading and to get a sense of the roadmap see the initial releasse blog post [here](https://andrews.substack.com/p/hako).
