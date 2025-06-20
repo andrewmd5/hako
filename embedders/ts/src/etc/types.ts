@@ -585,17 +585,14 @@ export function evalOptionsToFlags(
 /**
  * JavaScript Promise states.
  */
-export enum PromiseState {
+export type PromiseState =
   /** Promise has not been resolved or rejected yet */
-  Pending = 0,
-
+  | "pending"
   /** Promise has been resolved with a value */
-  Fulfilled = 1,
-
+  | "fulfilled"
   /** Promise has been rejected with a reason */
-  Rejected = 2,
-}
-
+  | "rejected";
+  
 //=============================================================================
 // Equality Operations
 //=============================================================================
