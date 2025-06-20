@@ -91,8 +91,6 @@ export interface HakoOptions<TOptions, TResponse> {
       initial?: number;
       /** Maximum memory size in bytes */
       maximum?: number;
-      /** Whether to use shared memory */
-      shared?: boolean;
       /** Bring Your Own Memory - use an existing WebAssembly memory instance */
       byom?: WebAssembly.Memory;
     };
@@ -129,7 +127,7 @@ export async function createHakoRuntime<TOptions, TResponse>(
   const memConfig = options.wasm?.memory || {};
   const initialMemory = memConfig.initial || defaultInitialMemory;
   const maximumMemory = memConfig.maximum || defaultMaximumMemory;
-  const sharedMemory = memConfig.shared !== undefined ? memConfig.shared : true;
+
 
   // Use BYOM (Bring Your Own Memory) or create a new one
   let wasmMemory: WebAssembly.Memory;
@@ -142,7 +140,7 @@ export async function createHakoRuntime<TOptions, TResponse>(
     wasmMemory = new WebAssembly.Memory({
       initial: initialPages,
       maximum: maximumPages,
-      shared: sharedMemory,
+      shared: false,
     });
   }
 

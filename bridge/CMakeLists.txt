@@ -311,7 +311,6 @@ target_include_directories(hako_reactor PRIVATE
 # WASM-specific link options
 target_link_options(hako_reactor PRIVATE
     -mexec-model=reactor
-    -Wl,--import-memory,--export-memory
     -Wl,--no-entry
     -Wl,--export=malloc
     -Wl,--export=free
