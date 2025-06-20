@@ -1,0 +1,138 @@
+From 978acb1a31436f13dcf0b5fd1277fa1f222a81b2 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Wed, 16 Apr 2025 12:13:22 +0900
+Subject: [PATCH] add Performance intrinsic
+
+adds performance.now/timeOrigin
+---
+ .../quickjs/include/quickjs-inner.h           |  2 +
+ src/interpreter/quickjs/include/quickjs.h     |  1 +
+ src/interpreter/quickjs/source/quickjs.cc     | 78 ++++++++++++++++++-
+ 3 files changed, 80 insertions(+), 1 deletion(-)
+
+diff --git a/src/interpreter/quickjs/include/quickjs-inner.h b/src/interpreter/quickjs/include/quickjs-inner.h
+index 348bc5f..b72248d 100644
+--- a/src/interpreter/quickjs/include/quickjs-inner.h
++++ b/src/interpreter/quickjs/include/quickjs-inner.h
+@@ -807,6 +807,8 @@ struct LEPUSContext {
+   bool gc_enable;
+   bool is_lepusng;
+   bool object_ctx_check;
++  uint64_t time_origin; // Monotonic clock time at context creation (in nanoseconds)
++  double time_origin_epoch_ms; // Wall clock time at context creation (in milliseconds)
+ };
+ 
+ typedef union JSFloat64Union {
+diff --git a/src/interpreter/quickjs/include/quickjs.h b/src/interpreter/quickjs/include/quickjs.h
+index 750d17b..cf06cae 100644
+--- a/src/interpreter/quickjs/include/quickjs.h
++++ b/src/interpreter/quickjs/include/quickjs.h
+@@ -762,6 +762,7 @@ QJS_HIDE void LEPUS_AddIntrinsicStringNormalize(LEPUSContext *ctx);
+ QJS_HIDE void LEPUS_AddIntrinsicRegExpCompiler(LEPUSContext *ctx);
+ QJS_HIDE void LEPUS_AddIntrinsicRegExp(LEPUSContext *ctx);
+ QJS_HIDE void LEPUS_AddIntrinsicJSON(LEPUSContext *ctx);
++QJS_HIDE void LEPUS_AddIntrinsicPerformance(LEPUSContext *ctx);
+ QJS_HIDE void LEPUS_AddIntrinsicProxy(LEPUSContext *ctx);
+ QJS_HIDE void LEPUS_AddIntrinsicMapSet(LEPUSContext *ctx);
+ QJS_HIDE void LEPUS_AddIntrinsicTypedArrays(LEPUSContext *ctx);
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index b39e63b..9ab479b 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -2004,9 +2004,10 @@ LEPUSContext *LEPUS_NewContext(LEPUSRuntime *rt) {
+   LEPUS_AddIntrinsicMapSet(ctx);
+   LEPUS_AddIntrinsicTypedArrays(ctx);
+   LEPUS_AddIntrinsicPromise(ctx);
++  LEPUS_AddIntrinsicPerformance(ctx);
+   JS_AddIntrinsicWeakRef(ctx);
+   JS_AddIntrinsicFinalizationRegistry(ctx);
+-
++  
+   return ctx;
+ }
+ 
+@@ -46658,6 +46659,81 @@ void LEPUS_AddIntrinsicJSON(LEPUSContext *ctx) {
+   }
+ }
+ 
++QJS_STATIC LEPUSValue js_performance_now(LEPUSContext *ctx, LEPUSValueConst this_val,
++                                    int argc, LEPUSValueConst *argv) {
++    __wasi_errno_t err;
++    __wasi_timestamp_t current_time;
++    
++    // Get the current time using WASI monotonic clock (returns nanoseconds)
++    err = __wasi_clock_time_get(__WASI_CLOCKID_MONOTONIC, 0, &current_time);
++    
++    // Check for errors
++    if (err != 0) {
++        return LEPUS_ThrowInternalError(ctx, "Failed to get monotonic time: error %d", err);
++    }
++    
++    // Calculate elapsed time since context creation in milliseconds (with sub-ms precision)
++    // Convert from nanoseconds to milliseconds (divide by 1,000,000)
++    double elapsed_ms = (double)(current_time - ctx->time_origin) / 1000000.0;
++    
++    // Return the high-resolution timestamp
++    return LEPUS_NewFloat64(ctx, elapsed_ms);
++}
++
++QJS_STATIC LEPUSValue js_performance_timeOrigin(LEPUSContext *ctx, LEPUSValueConst this_val,
++                                    int magic) {
++    // According to spec, timeOrigin should be the time relative to Unix epoch
++    // If we have stored the Unix time when the context was created, we can return that
++    
++    // Return timeOrigin in milliseconds
++    // Depending on how your time_origin was stored, you might need conversion
++    double time_origin_ms = (double)(ctx->time_origin_epoch_ms);
++    return LEPUS_NewFloat64(ctx, time_origin_ms);
++}
++
++static const LEPUSCFunctionListEntry js_performance_funcs[] = {
++    LEPUS_CFUNC_DEF("now", 0, js_performance_now),
++    LEPUS_CGETSET_MAGIC_DEF("timeOrigin", js_performance_timeOrigin, NULL, MAGIC_SET),
++    LEPUS_PROP_STRING_DEF("[Symbol.toStringTag]", "Performance",
++                          LEPUS_PROP_CONFIGURABLE),
++};
++
++static const LEPUSCFunctionListEntry js_performance_obj[] = {
++    LEPUS_OBJECT_DEF("performance", js_performance_funcs, countof(js_performance_funcs),
++                     LEPUS_PROP_WRITABLE | LEPUS_PROP_CONFIGURABLE),
++};
++
++void LEPUS_AddIntrinsicPerformance(LEPUSContext *ctx) {
++    // We need to initialize the time origin when the context is created
++    __wasi_errno_t err;
++    __wasi_timestamp_t monotonic_now;
++    
++    // Get the current monotonic time (for now())
++    err = __wasi_clock_time_get(__WASI_CLOCKID_MONOTONIC, 0, &monotonic_now);
++    if (err != 0) {
++        LEPUS_ThrowInternalError(ctx, "Failed to get monotonic time: error %d", err);
++        return;
++    }
++    
++    // Store the time origin in the context
++    ctx->time_origin = monotonic_now;
++    
++    // We also need to store the time origin relative to Unix epoch (for timeOrigin)
++    __wasi_timestamp_t realtime_now;
++    err = __wasi_clock_time_get(__WASI_CLOCKID_REALTIME, 0, &realtime_now);
++    if (err != 0) {
++        LEPUS_ThrowInternalError(ctx, "Failed to get realtime time: error %d", err);
++        return;
++    }
++    
++    // Convert nanoseconds to milliseconds for epoch time
++    ctx->time_origin_epoch_ms = (double)realtime_now / 1000000.0;
++    
++    // Add the performance object to the global object
++    LEPUS_SetPropertyFunctionList(ctx, ctx->global_obj, js_performance_obj,
++                                 countof(js_performance_obj));
++}
++
+ /* Reflect */
+ 
+ QJS_STATIC LEPUSValue js_reflect_apply(LEPUSContext *ctx,
+-- 
+2.39.5 (Apple Git-154)
+

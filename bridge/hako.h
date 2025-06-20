@@ -42,7 +42,8 @@ extern "C"
         HAKO_Intrinsic_BigFloat = 1 << 12,
         HAKO_Intrinsic_BigDecimal = 1 << 13,
         HAKO_Intrinsic_OperatorOverloading = 1 << 14,
-        HAKO_Intrinsic_BignumExt = 1 << 15
+        HAKO_Intrinsic_BignumExt = 1 << 15,
+        HAKO_Intrinsic_Performance = 1 << 16
     } HAKO_Intrinsic;
 
     typedef enum

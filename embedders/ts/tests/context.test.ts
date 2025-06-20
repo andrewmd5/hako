@@ -245,13 +245,41 @@ fibonacci(100);
       expect(result.unwrap().asString()).toEqual(base64String);
     });
 
+    it("should verify Performance API implementation", () => {
+      // Test the performance API implementation
+      using result = context.evalCode(`
+    let a = {
+      now: performance.now(),
+      origin: performance.timeOrigin,
+      current: performance.timeOrigin + performance.now(),
+      nowType: typeof performance.now(),
+      originType: typeof performance.timeOrigin
+    }
+    a
+  `);
+
+      using value = context.unwrapResult<VMValue>(result);
+      using nativeValue =  value.toNativeValue();
+      const performanceData = nativeValue.value;
+      console.log("Performance API results:", performanceData);
+
+      // Verify that the types are correct (should be numbers)
+      expect(performanceData.nowType).toEqual('number');
+      expect(performanceData.originType).toEqual('number');
+
+      // Verify that now() returns a small positive number (milliseconds since context creation)
+      expect(performanceData.now).toBeGreaterThanOrEqual(0);
+
+      // Verify that timeOrigin is a large number (milliseconds since Unix epoch)
+      // Checking if it's at least from year 2020 (1577836800000 = Jan 1, 2020)
+      expect(performanceData.origin).toBeGreaterThan(1577836800000);
+    });
+
     it("should create a base64 string without padding", () => {
       const base64String = "HelloQ";
       using result = context.evalCode(`
 				const uint8Array = new Uint8Array([29, 233, 101, 161]);
-        JSON.parse("{}");
 				uint8Array.toBase64({ omitPadding: true })
-        
 		`);
       expect(result.unwrap().asString()).toEqual(base64String);
     });

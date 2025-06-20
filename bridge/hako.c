@@ -535,6 +535,10 @@ LEPUSContext *WASM_EXPORT(HAKO_NewContext)(LEPUSRuntime *rt,
   {
     LEPUS_AddIntrinsicPromise(ctx);
   }
+  if (intrinsics & HAKO_Intrinsic_Performance)
+  {
+    LEPUS_AddIntrinsicPerformance(ctx);
+  }
 
   return ctx;
 }
