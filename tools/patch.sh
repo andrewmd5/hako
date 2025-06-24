@@ -81,6 +81,10 @@ done
 echo "All patches processed!"
 # commit the changes
 cd "$PRIMJS_DIR" || exit 1
+if [ "$GITHUB_ACTIONS" = "true" ]; then
+   git config user.email "ci@github.com"
+   git config user.name "Github Actions"
+fi
 git add .
 git commit -m "Applied patches from ${PATCHES_DIR}" 
 if [ $? -ne 0 ]; then
