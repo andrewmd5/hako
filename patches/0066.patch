@@ -1,0 +1,95 @@
+From d5d1d30240f098640922ede5477a71a894155837 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 24 Jun 2025 21:52:53 +0900
+Subject: [PATCH] disable thread requirements
+
+---
+ src/gc/thread_pool.cc                     |  2 +-
+ src/gc/thread_pool.h                      |  2 ++
+ src/interpreter/quickjs/source/quickjs.cc | 24 ++++++++++++++++++++---
+ 3 files changed, 24 insertions(+), 4 deletions(-)
+
+diff --git a/src/gc/thread_pool.cc b/src/gc/thread_pool.cc
+index b4718ee..2c24a61 100644
+--- a/src/gc/thread_pool.cc
++++ b/src/gc/thread_pool.cc
+@@ -17,7 +17,7 @@
+ // Licensed under the Apache License Version 2.0 that can be found in the
+ // LICENSE file in the root directory of this source tree.
+ 
+-#ifndef _WIN32
++#if !defined(_WIN32) && !defined(__WASI_SDK__)
+ #include "gc/thread_pool.h"
+ 
+ #include <sched.h>
+diff --git a/src/gc/thread_pool.h b/src/gc/thread_pool.h
+index b6b12c3..3d961f9 100644
+--- a/src/gc/thread_pool.h
++++ b/src/gc/thread_pool.h
+@@ -19,6 +19,7 @@
+ 
+ #ifndef SRC_GC_THREAD_POOL_H_
+ #define SRC_GC_THREAD_POOL_H_
++#if !defined(__WASI_SDK__)
+ 
+ #ifndef _WIN32
+ #include <pthread.h>
+@@ -203,3 +204,4 @@ class ByteThreadPool {
+ };
+ 
+ #endif  // SRC_GC_THREAD_POOL_H_
++#endif
+\ No newline at end of file
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 34a5af2..2abd84e 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -1743,11 +1743,29 @@ void LEPUS_FreeRuntime(LEPUSRuntime *rt) {
+ #define realloc(p, s) realloc_is_forbidden(p, s)
+ 
+ #if defined(EMSCRIPTEN)
+-QJS_STATIC inline uintptr_t get_thread_stack_limit() {
++QJS_STATIC inline uintptr_t get_thread_stack_limit()
++{
+ #if defined(_WIN32)
+   MEMORY_BASIC_INFORMATION mem;
+   VirtualQuery(&mem, &mem, sizeof mem);
+   return (uintptr_t)(mem.AllocationBase) + (52 * 1024);
++#elif defined(__WASI_SDK__)
++  // WASI approach: use known stack size from build configuration
++  volatile char stack_marker;
++  uintptr_t current_sp = (uintptr_t)&stack_marker;
++
++  const size_t stack_reserve = 52 * 1024; // 52k reserve
++
++#ifdef WASI_STACK_SIZE
++  const size_t stack_size = WASI_STACK_SIZE;
++#else
++  const size_t stack_size = 8 * 1024 * 1024; // 8MB fallback
++#endif
++
++  // Calculate stack base assuming downward growth
++  // Align to stack size boundary for better estimation
++  uintptr_t estimated_stack_base = (current_sp + stack_size) & ~(stack_size - 1);
++  return estimated_stack_base - stack_size + stack_reserve;
+ #else
+   uintptr_t stack_limit = 0;
+   void *stack;
+@@ -1758,12 +1776,12 @@ QJS_STATIC inline uintptr_t get_thread_stack_limit() {
+   stack = pthread_get_stackaddr_np(tid);
+   stack_size = pthread_get_stacksize_np(tid);
+   stack_limit = reinterpret_cast<uintptr_t>(stack) - stack_size +
+-                (52 * 1024);  // reserve 52k
++                (52 * 1024); // reserve 52k
+ #else
+   pthread_getattr_np(tid, &attr);
+   pthread_attr_getstack(&attr, &stack, &stack_size);
+   stack_limit =
+-      reinterpret_cast<uintptr_t>(stack) + (52 * 1024);  // reserve 52k
++      reinterpret_cast<uintptr_t>(stack) + (52 * 1024); // reserve 52k
+ #endif
+   pthread_attr_destroy(&attr);
+   return stack_limit;
+-- 
+2.48.1
+
