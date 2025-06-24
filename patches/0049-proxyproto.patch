@@ -1,0 +1,34 @@
+From 73a96400a7698b7695285e4091b90ebe18953df7 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 24 Jun 2025 17:29:43 +0900
+Subject: [PATCH] Proxy: fixed prototype comparison
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 855b4d5..840bced 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -47153,7 +47153,7 @@ QJS_STATIC LEPUSValueConst js_proxy_getPrototypeOf(LEPUSContext *ctx,
+       LEPUS_FreeValue(ctx, ret);
+       return LEPUS_EXCEPTION;
+     }
+-    if (LEPUS_VALUE_GET_OBJ(proto1) != LEPUS_VALUE_GET_OBJ(ret)) {
++    if (!js_same_value(ctx, proto1, ret)) {
+     fail:
+       LEPUS_FreeValue(ctx, ret);
+       return LEPUS_ThrowTypeError(ctx, "proxy: inconsistent prototype");
+@@ -47195,7 +47195,7 @@ QJS_STATIC int js_proxy_setPrototypeOf(LEPUSContext *ctx, LEPUSValueConst obj,
+   if (!res2) {
+     proto1 = JS_GetPrototype_RC(ctx, s->target);
+     if (LEPUS_IsException(proto1)) return -1;
+-    if (LEPUS_VALUE_GET_OBJ(proto_val) != LEPUS_VALUE_GET_OBJ(proto1)) {
++    if (!js_same_value(ctx, proto_val, proto1)) {
+       LEPUS_ThrowTypeError(ctx, "proxy: inconsistent prototype");
+       return -1;
+     }
+-- 
+2.48.1
+
