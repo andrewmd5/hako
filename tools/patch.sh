@@ -79,3 +79,12 @@ for PATCH_FILE in "$PATCHES_DIR"/*.{patch,diff}; do
 done
 
 echo "All patches processed!"
+# commit the changes
+cd "$PRIMJS_DIR" || exit 1
+git add .
+git commit -m "Applied patches from ${PATCHES_DIR}" 
+if [ $? -ne 0 ]; then
+  echo "No changes to commit."
+else
+  echo "Changes committed successfully."
+fi
