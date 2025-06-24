@@ -1,0 +1,24 @@
+From 0b33d8fa08f09e69693b9dbc6f68efe12c184f95 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 24 Jun 2025 15:25:22 +0900
+Subject: [PATCH] new keyword cannot be used with an optional chain
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 932d120..12a0a9c 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -24225,6 +24225,7 @@ QJS_STATIC __exception int js_parse_postfix_expr(JSParseState *s,
+     BOOL has_optional_chain = FALSE;
+ 
+     if (s->token.val == TOK_QUESTION_MARK_DOT) {
++      if ((parse_flags & PF_POSTFIX_CALL) == 0) return js_parse_error(s, "new keyword cannot be used with an optional chain");
+       /* optional chaining */
+       if (next_token(s)) return -1;
+       has_optional_chain = TRUE;
+-- 
+2.48.1
+
