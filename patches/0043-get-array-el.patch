@@ -1,0 +1,163 @@
+From 8f8b4e29c61d88e9a1202567eb77eb4d8fe23624 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 24 Jun 2025 15:49:49 +0900
+Subject: [PATCH 1/2] added get_array_el3 opcode - removed to_propkey2 opcode
+
+---
+ .../quickjs/include/quickjs-opcode.h          |  2 +-
+ src/interpreter/quickjs/source/quickjs.cc     | 64 +++++++++++--------
+ 2 files changed, 37 insertions(+), 29 deletions(-)
+
+diff --git a/src/interpreter/quickjs/include/quickjs-opcode.h b/src/interpreter/quickjs/include/quickjs-opcode.h
+index 7044370..b2dd55e 100644
+--- a/src/interpreter/quickjs/include/quickjs-opcode.h
++++ b/src/interpreter/quickjs/include/quickjs-opcode.h
+@@ -159,6 +159,7 @@ DEF(put_private_field, 1, 3, 0, none)    /* obj value prop -> */
+ DEF(define_private_field, 1, 3, 1, none) /* obj prop value -> obj */
+ DEF(get_array_el, 1, 2, 1, none)
+ DEF(get_array_el2, 1, 2, 2, none) /* obj prop -> obj value */
++DEF(get_array_el3, 1, 2, 3, none) /* obj prop -> obj prop1 value */
+ DEF(put_array_el, 1, 3, 0, none)
+ DEF(get_super_value, 1, 3, 1, none) /* this obj prop -> value */
+ DEF(put_super_value, 1, 4, 0, none) /* this obj prop value -> */
+@@ -201,7 +202,6 @@ DEF(ret, 1, 1, 0, none)    /* used to return from the finally block */
+ DEF(to_object, 1, 1, 1, none)
+ // DEF(      to_string, 1, 1, 1, none)
+ DEF(to_propkey, 1, 1, 1, none)
+-DEF(to_propkey2, 1, 2, 2, none)
+ 
+ DEF(with_get_var, 10, 1, 0,
+     atom_label_u8) /* must be in the same order as scope_xxx */
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 5bb23a4..492c200 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -18035,6 +18035,39 @@ restart:
+       }
+       BREAK;
+ 
++      CASE(OP_get_array_el3):
++      {
++          LEPUSValue val;
++
++          switch (LEPUS_VALUE_GET_TAG(sp[-2])) {
++          case LEPUS_TAG_INT:
++          case LEPUS_TAG_STRING:
++          case LEPUS_TAG_SYMBOL:
++              /* undefined and null are tested in JS_GetPropertyValue() */
++              break;
++          default:
++              /* must be tested nefore JS_ToPropertyKey */
++              if (unlikely(LEPUS_IsUndefined(sp[-2]) || LEPUS_IsNull(sp[-2])))
++              {
++                LEPUS_ThrowTypeError(ctx, "value has no property");
++                goto exception;
++              }
++              sf->cur_pc = pc;
++              ret_val = LEPUS_ToPropertyKey(ctx, sp[-1]);
++              if (LEPUS_IsException(ret_val))
++                  goto exception;
++              LEPUS_FreeValue(ctx, sp[-1]);
++              sp[-1] = ret_val;
++              break;
++          }
++          sf->cur_pc = pc;
++          val = JS_GetPropertyValue(ctx, sp[-2], LEPUS_DupValue(ctx, sp[-1]));
++          *sp++ = val;
++          if (unlikely(LEPUS_IsException(val)))
++            goto exception;
++      }
++      BREAK;
++
+       CASE(OP_get_ref_value) : {
+         LEPUSValue val;
+         if (unlikely(LEPUS_IsUndefined(sp[-2]))) {
+@@ -18686,27 +18719,6 @@ restart:
+           break;
+       }
+       BREAK;
+-
+-      CASE(OP_to_propkey2)
+-          : /* must be tested first */
+-            if (unlikely(LEPUS_IsUndefined(sp[-2]) || LEPUS_IsNull(sp[-2]))) {
+-        LEPUS_ThrowTypeError(ctx, "value has no property");
+-        goto exception;
+-      }
+-      switch (LEPUS_VALUE_GET_TAG(sp[-1])) {
+-        case LEPUS_TAG_INT:
+-        case LEPUS_TAG_STRING:
+-        case LEPUS_TAG_SYMBOL:
+-        case LEPUS_TAG_SEPARABLE_STRING:
+-          break;
+-        default:
+-          ret_val = LEPUS_ToPropertyKey(ctx, sp[-1]);
+-          if (LEPUS_IsException(ret_val)) goto exception;
+-          LEPUS_FreeValue(ctx, sp[-1]);
+-          sp[-1] = ret_val;
+-          break;
+-      }
+-      BREAK;
+ #if 0
+         CASE(OP_to_string):
+             if (!LEPUS_VALUE_IS_STRING(sp[-1])) {
+@@ -23302,10 +23314,7 @@ __exception int get_lvalue(JSParseState *s, int *popcode, int *pscope,
+         emit_u16(s, scope);
+         break;
+       case OP_get_array_el:
+-        /* XXX: replace by a single opcode ? */
+-        emit_op(s, OP_to_propkey2);
+-        emit_op(s, OP_dup2);
+-        emit_op(s, OP_get_array_el);
++        emit_op(s, OP_get_array_el3);
+         break;
+       case OP_get_super_value:
+         emit_op(s, OP_to_propkey);
+@@ -23327,7 +23336,7 @@ __exception int get_lvalue(JSParseState *s, int *popcode, int *pscope,
+         opcode = OP_get_ref_value;
+         break;
+       case OP_get_array_el:
+-        emit_op(s, OP_to_propkey2);
++        emit_op(s, OP_to_propkey);
+         break;
+       case OP_get_super_value:
+         emit_op(s, OP_to_propkey);
+@@ -31204,9 +31213,8 @@ __exception int resolve_labels(LEPUSContext *ctx, JSFunctionDef *s) {
+         goto no_change;
+ 
+       case OP_to_propkey:
+-      case OP_to_propkey2:
+         if (OPTIMIZE) {
+-          /* remove redundant to_propkey/to_propkey2 opcodes when storing simple
++          /* remove redundant to_propkey opcodes when storing simple
+            * data */
+           if (code_match(&cc, pos_next,
+                          M3(OP_get_loc, OP_get_arg, OP_get_var_ref), -1,
+-- 
+2.48.1
+
+
+From ab7966266690a3aed94d822971118badd9b1b1a6 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 24 Jun 2025 16:00:02 +0900
+Subject: [PATCH 2/2] quick
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 492c200..38740b9 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -23694,7 +23694,7 @@ QJS_STATIC int js_parse_destructing_element(JSParseState *s, int tok,
+           continue;
+         }
+         if (prop_name == JS_ATOM_NULL) {
+-          emit_op(s, OP_to_propkey2);
++          emit_op(s, OP_to_propkey);
+           if (has_ellipsis) {
+             /* define the property in excludeList */
+             emit_op(s, OP_perm3);
+-- 
+2.48.1
+
