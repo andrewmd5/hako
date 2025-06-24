@@ -1,0 +1,30 @@
+From ed71194683ea34b9112cf873c62ef06fbb545572 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 24 Jun 2025 20:34:14 +0900
+Subject: [PATCH] fixed GeneratorFunction prototype
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index e2dcabf..87527f1 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -53362,9 +53362,10 @@ void LEPUS_AddIntrinsicBaseObjects(LEPUSContext *ctx) {
+ 
+   ctx->class_proto[JS_CLASS_GENERATOR_FUNCTION] =
+       LEPUS_NewObjectProto(ctx, ctx->function_proto);
+-  obj1 = LEPUS_NewCFunctionMagic(
+-      ctx, js_function_constructor, "GeneratorFunction", 1,
+-      LEPUS_CFUNC_constructor_or_func_magic, JS_FUNC_GENERATOR);
++  obj1 = JS_NewCFunction3(ctx, (LEPUSCFunction *)js_function_constructor,
++                          "GeneratorFunction", 1,
++                          LEPUS_CFUNC_constructor_or_func_magic, JS_FUNC_GENERATOR,
++                          ctx->function_ctor);
+   LEPUS_SetPropertyFunctionList(ctx,
+                                 ctx->class_proto[JS_CLASS_GENERATOR_FUNCTION],
+                                 js_generator_function_proto_funcs,
+-- 
+2.48.1
+
