@@ -1,0 +1,20 @@
+diff --git forkSrcPrefix/src/interpreter/quickjs/source/quickjs.cc forkDstPrefix/src/interpreter/quickjs/source/quickjs.cc
+index 7c9a4ac19cecd3e20fde066632a8516435362e86..b31006f1e413256dd848d39d0744016715bfe84e 100644
+--- forkSrcPrefix/src/interpreter/quickjs/source/quickjs.cc
++++ forkDstPrefix/src/interpreter/quickjs/source/quickjs.cc
+@@ -48107,12 +48107,13 @@ QJS_STATIC uint32_t map_hash_key(LEPUSContext *ctx, LEPUSValueConst key) {
+ 
+ QJS_STATIC JSMapRecord *map_find_record(LEPUSContext *ctx, JSMapState *s,
+                                         LEPUSValueConst key) {
+-  struct list_head *el;
++  struct list_head *el, *el1;
+   JSMapRecord *mr;
+   uint32_t h;
+ 
+   h = map_hash_key(ctx, key) & (s->hash_size - 1);
+-  list_for_each(el, &s->hash_table[h]) {
++  list_for_each_safe(el, el1, &s->hash_table[h])
++  {
+     mr = list_entry(el, JSMapRecord, hash_link);
+     if (js_same_value_zero(ctx, mr->key, key)) return mr;
+   }
