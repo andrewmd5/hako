@@ -1,0 +1,29 @@
+From 63285043e63c62badcec070d7c5dcfcb08d79072 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 24 Jun 2025 17:49:13 +0900
+Subject: [PATCH] fix: Promsie.try
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 855b4d5..cd3ef4c 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -50468,11 +50468,11 @@ QJS_STATIC LEPUSValue js_promise_finally(LEPUSContext *ctx,
+ static const LEPUSCFunctionListEntry js_promise_funcs[] = {
+     LEPUS_CFUNC_MAGIC_DEF("resolve", 1, js_promise_resolve, 0),
+     LEPUS_CFUNC_MAGIC_DEF("reject", 1, js_promise_resolve, 1),
+-    LEPUS_CFUNC_MAGIC_DEF("any", 1, js_promise_all, PROMISE_MAGIC_any),
+     LEPUS_CFUNC_MAGIC_DEF("all", 1, js_promise_all, PROMISE_MAGIC_all),
+     LEPUS_CFUNC_MAGIC_DEF("allSettled", 1, js_promise_all,
+                           PROMISE_MAGIC_allSettled),
+     LEPUS_CFUNC_MAGIC_DEF("any", 1, js_promise_all, PROMISE_MAGIC_any),
++    LEPUS_CFUNC_DEF("try", 1, js_promise_try),
+     LEPUS_CFUNC_DEF("race", 1, js_promise_race),
+     LEPUS_CFUNC_DEF("withResolvers", 0, js_promise_withResolvers),
+     LEPUS_CGETSET_DEF("[Symbol.species]", js_get_this, NULL),
+-- 
+2.48.1
+
