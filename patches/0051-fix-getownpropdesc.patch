@@ -1,0 +1,33 @@
+From 99332f131588a73613f9474995de3cc416934f77 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 24 Jun 2025 18:12:57 +0900
+Subject: [PATCH] fixed Proxy getOwnPropertyDescriptor with getters and setters
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index cd3ef4c..0eda887 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -47483,6 +47483,16 @@ QJS_STATIC int js_proxy_get_own_property(LEPUSContext *ctx,
+     res = js_obj_to_desc(ctx, &desc, ret1);
+     LEPUS_FreeValue(ctx, ret1);
+     if (res < 0) return -1;
++    /* convert the desc.flags to property flags */
++    if (desc.flags & (LEPUS_PROP_HAS_GET | LEPUS_PROP_HAS_SET))
++    {
++      desc.flags |= LEPUS_PROP_GETSET;
++    }
++    else
++    {
++      desc.flags |= LEPUS_PROP_NORMAL;
++    }
++    desc.flags &= (LEPUS_PROP_C_W_E | LEPUS_PROP_TMASK);
+     if (target_res) {
+       /* convert desc.flags to defineProperty flags */
+       flags1 =
+-- 
+2.48.1
+
