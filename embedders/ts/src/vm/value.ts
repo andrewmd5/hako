@@ -358,9 +358,15 @@ export class VMValue implements Disposable {
         return "Uint32Array";
       case 7:
         return "Int32Array";
-      case 8:
-        return "Float32Array";
+        case 8:
+         return "BigInt64Array";
       case 9:
+        return "BigUint64Array";
+      case 10:
+        return "Float16Array";
+      case 11:
+        return "Float32Array";
+      case 12:
         return "Float64Array";
       default:
         return "Unknown";

@@ -1,0 +1,482 @@
+From 946adb1e7f12058e017a8c0bb9874e886f7641d5 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 24 Jun 2025 17:02:21 +0900
+Subject: [PATCH] Float16Array
+
+---
+ src/inspector/debugger/debugger_properties.cc |   3 +
+ src/interpreter/quickjs/include/cutils.h      |  86 +++++++++++++
+ .../quickjs/include/quickjs-atom.h            |   1 +
+ .../quickjs/include/quickjs-inner.h           |   9 +-
+ src/interpreter/quickjs/include/quickjs.h     |  26 ++--
+ src/interpreter/quickjs/source/quickjs.cc     | 116 ++++++++++++++++--
+ 6 files changed, 218 insertions(+), 23 deletions(-)
+
+diff --git a/src/inspector/debugger/debugger_properties.cc b/src/inspector/debugger/debugger_properties.cc
+index 066319d..b73e21b 100644
+--- a/src/inspector/debugger/debugger_properties.cc
++++ b/src/inspector/debugger/debugger_properties.cc
+@@ -47,6 +47,9 @@
+   V("Uint16Array", LEPUS_TYPED_UINT16_ARRAY)       \
+   V("Int32Array", LEPUS_TYPED_INT32_ARRAY)         \
+   V("Uint32Array", LEPUS_TYPED_UINT32_ARRAY)       \
++  V("BigInt64Array", LEPUS_TYPED_BIG_INT64_ARRAY)   \
++  V("BigUint64Array", LEPUS_TYPED_BIG_UINT64_ARRAY) \
++  V("Float16Array", LEPUS_TYPED_FLOAT16_ARRAY) \
+   V("Float32Array", LEPUS_TYPED_FLOAT32_ARRAY)     \
+   V("Float64Array", LEPUS_TYPED_FLOAT64_ARRAY)
+ 
+diff --git a/src/interpreter/quickjs/include/cutils.h b/src/interpreter/quickjs/include/cutils.h
+index 0714a1c..4dfeb21 100644
+--- a/src/interpreter/quickjs/include/cutils.h
++++ b/src/interpreter/quickjs/include/cutils.h
+@@ -270,4 +270,90 @@ static inline BOOL is_surrogate(uint32_t c)
+   return (c >> 11) == (0xD800 >> 11); // 0xD800-0xDFFF
+ }
+ 
++static inline uint64_t float64_as_uint64(double d)
++{
++  union
++  {
++    double d;
++    uint64_t u64;
++  } u;
++  u.d = d;
++  return u.u64;
++}
++
++static inline double uint64_as_float64(uint64_t u64)
++{
++  union
++  {
++    double d;
++    uint64_t u64;
++  } u;
++  u.u64 = u64;
++  return u.d;
++}
++
++static inline double fromfp16(uint16_t v)
++{
++  double d;
++  uint32_t v1;
++  v1 = v & 0x7fff;
++  if (unlikely(v1 >= 0x7c00))
++    v1 += 0x1f8000; /* NaN or infinity */
++  d = uint64_as_float64(((uint64_t)(v >> 15) << 63) | ((uint64_t)v1 << (52 - 10)));
++  return d * 0x1p1008;
++}
++
++static inline uint16_t tofp16(double d)
++{
++  uint64_t a, addend;
++  uint32_t v, sgn;
++  int shift;
++
++  a = float64_as_uint64(d);
++  sgn = a >> 63;
++  a = a & 0x7fffffffffffffff;
++  if (unlikely(a > 0x7ff0000000000000))
++  {
++    /* nan */
++    v = 0x7c01;
++  }
++  else if (a < 0x3f10000000000000)
++  { /* 0x1p-14 */
++    /* subnormal f16 number or zero */
++    if (a <= 0x3e60000000000000)
++    {             /* 0x1p-25 */
++      v = 0x0000; /* zero */
++    }
++    else
++    {
++      shift = 1051 - (a >> 52);
++      a = ((uint64_t)1 << 52) | (a & (((uint64_t)1 << 52) - 1));
++      addend = ((a >> shift) & 1) + (((uint64_t)1 << (shift - 1)) - 1);
++      v = (a + addend) >> shift;
++    }
++  }
++  else
++  {
++    /* normal number or infinity */
++    a -= 0x3f00000000000000; /* adjust the exponent */
++    /* round */
++    addend = ((a >> (52 - 10)) & 1) + (((uint64_t)1 << (52 - 11)) - 1);
++    v = (a + addend) >> (52 - 10);
++    /* overflow ? */
++    if (unlikely(v > 0x7c00))
++      v = 0x7c00;
++  }
++  return v | (sgn << 15);
++}
++
++static inline int isfp16nan(uint16_t v)
++{
++  return (v & 0x7FFF) > 0x7C00;
++}
++
++static inline int isfp16zero(uint16_t v)
++{
++  return (v & 0x7FFF) == 0;
++}
++
+ #endif  // SRC_INTERPRETER_QUICKJS_INCLUDE_CUTILS_H_
+diff --git a/src/interpreter/quickjs/include/quickjs-atom.h b/src/interpreter/quickjs/include/quickjs-atom.h
+index e4e77a9..5d567ef 100644
+--- a/src/interpreter/quickjs/include/quickjs-atom.h
++++ b/src/interpreter/quickjs/include/quickjs-atom.h
+@@ -210,6 +210,7 @@ DEF(Uint32Array, "Uint32Array")
+ DEF(BigInt64Array, "BigInt64Array")
+ DEF(BigUint64Array, "BigUint64Array")
+ #endif
++DEF(Float16Array, "Float16Array")
+ DEF(Float32Array, "Float32Array")
+ DEF(Float64Array, "Float64Array")
+ DEF(DataView, "DataView")
+diff --git a/src/interpreter/quickjs/include/quickjs-inner.h b/src/interpreter/quickjs/include/quickjs-inner.h
+index c1c428c..97786bc 100644
+--- a/src/interpreter/quickjs/include/quickjs-inner.h
++++ b/src/interpreter/quickjs/include/quickjs-inner.h
+@@ -123,7 +123,8 @@ size_t get_del_cnt(void *runtime, void *ptr);
+ 
+ #define __exception __attribute__((warn_unused_result))
+ 
+-enum JS_CLASS_ID {
++enum JS_CLASS_ID
++{
+   /* classid tag        */ /* union usage   | properties */
+   JS_CLASS_OBJECT = 1,     /* must be first */
+   JS_CLASS_ARRAY,          /* u.array       | length */
+@@ -156,6 +157,7 @@ enum JS_CLASS_ID {
+   JS_CLASS_BIG_INT64_ARRAY,  /* u.array (typed_array) */
+   JS_CLASS_BIG_UINT64_ARRAY, /* u.array (typed_array) */
+ #endif
++  JS_CLASS_FLOAT16_ARRAY, /* u.array (typed_array) */
+   JS_CLASS_FLOAT32_ARRAY, /* u.array (typed_array) */
+   JS_CLASS_FLOAT64_ARRAY, /* u.array (typed_array) */
+   JS_CLASS_DATAVIEW,      /* u.typed_array */
+@@ -1371,6 +1373,7 @@ struct LEPUSObject {
+         uint32_t *uint32_ptr; /* JS_CLASS_UINT32_ARRAY */
+         int64_t *int64_ptr;   /* JS_CLASS_INT64_ARRAY */
+         uint64_t *uint64_ptr; /* JS_CLASS_UINT64_ARRAY */
++        uint16_t *fp16_ptr;   /* JS_CLASS_FLOAT16_ARRAY */
+         float *float_ptr;     /* JS_CLASS_FLOAT32_ARRAY */
+         double *double_ptr;   /* JS_CLASS_FLOAT64_ARRAY */
+       } u;
+@@ -2687,6 +2690,8 @@ const LEPUSCFunctionListEntry js_dataview_proto_funcs[] = {
+     LEPUS_CFUNC_MAGIC_DEF("getBigUint64", 1, js_dataview_getValue,
+                           JS_CLASS_BIG_UINT64_ARRAY),
+ #endif
++    LEPUS_CFUNC_MAGIC_DEF("getFloat16", 1, js_dataview_getValue,
++                          JS_CLASS_FLOAT16_ARRAY),
+     LEPUS_CFUNC_MAGIC_DEF("getFloat32", 1, js_dataview_getValue,
+                           JS_CLASS_FLOAT32_ARRAY),
+     LEPUS_CFUNC_MAGIC_DEF("getFloat64", 1, js_dataview_getValue,
+@@ -2709,6 +2714,8 @@ const LEPUSCFunctionListEntry js_dataview_proto_funcs[] = {
+     LEPUS_CFUNC_MAGIC_DEF("setBigUint64", 2, js_dataview_setValue,
+                           JS_CLASS_BIG_UINT64_ARRAY),
+ #endif
++    LEPUS_CFUNC_MAGIC_DEF("setFloat16", 2, js_dataview_setValue, 
++                          JS_CLASS_FLOAT16_ARRAY),
+     LEPUS_CFUNC_MAGIC_DEF("setFloat32", 2, js_dataview_setValue,
+                           JS_CLASS_FLOAT32_ARRAY),
+     LEPUS_CFUNC_MAGIC_DEF("setFloat64", 2, js_dataview_setValue,
+diff --git a/src/interpreter/quickjs/include/quickjs.h b/src/interpreter/quickjs/include/quickjs.h
+index 3d6710c..018c0cb 100644
+--- a/src/interpreter/quickjs/include/quickjs.h
++++ b/src/interpreter/quickjs/include/quickjs.h
+@@ -118,17 +118,21 @@ enum {
+ };
+ 
+ // <Primjs begin>
+-typedef enum LEPUSTypedArrayType {
++typedef enum LEPUSTypedArrayType
++{
+   LEPUS_TYPED_UNKNOW,
+-  LEPUS_TYPED_UINT8C_ARRAY,  /* u.array (typed_array) */
+-  LEPUS_TYPED_INT8_ARRAY,    /* u.array (typed_array) */
+-  LEPUS_TYPED_UINT8_ARRAY,   /* u.array (typed_array) */
+-  LEPUS_TYPED_INT16_ARRAY,   /* u.array (typed_array) */
+-  LEPUS_TYPED_UINT16_ARRAY,  /* u.array (typed_array) */
+-  LEPUS_TYPED_INT32_ARRAY,   /* u.array (typed_array) */
+-  LEPUS_TYPED_UINT32_ARRAY,  /* u.array (typed_array) */
+-  LEPUS_TYPED_FLOAT32_ARRAY, /* u.array (typed_array) */
+-  LEPUS_TYPED_FLOAT64_ARRAY  /* u.array (typed_array) */
++  LEPUS_TYPED_UINT8C_ARRAY, /* u.array (typed_array) */
++  LEPUS_TYPED_INT8_ARRAY,   /* u.array (typed_array) */
++  LEPUS_TYPED_UINT8_ARRAY,  /* u.array (typed_array) */
++  LEPUS_TYPED_INT16_ARRAY,  /* u.array (typed_array) */
++  LEPUS_TYPED_UINT16_ARRAY, /* u.array (typed_array) */
++  LEPUS_TYPED_INT32_ARRAY,  /* u.array (typed_array) */
++  LEPUS_TYPED_UINT32_ARRAY, /* u.array (typed_array) */
++  LEPUS_TYPED_BIG_INT64_ARRAY,  /* u.array (typed_array) */
++  LEPUS_TYPED_BIG_UINT64_ARRAY, /* u.array (typed_array) */
++  LEPUS_TYPED_FLOAT16_ARRAY,    /* u.array (typed_array) */
++  LEPUS_TYPED_FLOAT32_ARRAY,    /* u.array (typed_array) */
++  LEPUS_TYPED_FLOAT64_ARRAY     /* u.array (typed_array) */
+ } LEPUSTypedArrayType;
+ // <Primjs end>
+ 
+@@ -1285,8 +1289,6 @@ LEPUSTypedArrayType LEPUS_GetTypedArrayType(LEPUSContext *ctx,
+ LEPUS_BOOL LEPUS_IsDataView(LEPUSContext *ctx, LEPUSValueConst val);
+ LEPUS_BOOL LEPUS_IsTypedArray(LEPUSContext *ctx, LEPUSValueConst val);
+ 
+-LEPUSClassID LEPUS_GetTypedArrayClassID(LEPUSTypedArrayType type);
+-
+ // must be freed by lepus_free() / lepus_free_rt()
+ uint8_t *LEPUS_MoveArrayBuffer(LEPUSContext *, size_t *, LEPUSValue);
+ LEPUS_BOOL LEPUS_StrictEq(LEPUSContext *ctx, LEPUSValueConst op1,
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 6343812..2ed0638 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -218,7 +218,7 @@ static uint8_t const typed_array_size_log2[JS_TYPED_ARRAY_COUNT] = {
+ #ifdef CONFIG_BIGNUM
+     3, 3, /* BigInt64Array, BigUint64Array */
+ #endif
+-    2, 3};
++    1, 2, 3 }; /* Float16Array, Float32Array, Float64Array*/
+ 
+ #define typed_array_size_log2(classid) \
+   (typed_array_size_log2[(classid)-JS_CLASS_UINT8C_ARRAY])
+@@ -866,6 +866,8 @@ static JSClassShortDef const js_std_class_def[] = {
+     {JS_ATOM_BigUint64Array, js_typed_array_finalizer,
+      js_typed_array_mark}, /* JS_CLASS_BIG_UINT64_ARRAY */
+ #endif
++    {JS_ATOM_Float16Array, js_typed_array_finalizer,
++     js_typed_array_mark}, /* JS_CLASS_FLOAT16_ARRAY */
+     {JS_ATOM_Float32Array, js_typed_array_finalizer,
+      js_typed_array_mark}, /* JS_CLASS_FLOAT32_ARRAY */
+     {JS_ATOM_Float64Array, js_typed_array_finalizer,
+@@ -6443,6 +6445,7 @@ void LEPUS_ComputeMemoryUsage(LEPUSRuntime *rt, LEPUSMemoryUsage *s) {
+       case JS_CLASS_BIG_INT64_ARRAY:  /* u.typed_array / u.array */
+       case JS_CLASS_BIG_UINT64_ARRAY: /* u.typed_array / u.array */
+ #endif
++      case JS_CLASS_FLOAT16_ARRAY: /* u.typed_array / u.array */
+       case JS_CLASS_FLOAT32_ARRAY: /* u.typed_array / u.array */
+       case JS_CLASS_FLOAT64_ARRAY: /* u.typed_array / u.array */
+       case JS_CLASS_DATAVIEW:      /* u.typed_array */
+@@ -8512,6 +8515,9 @@ LEPUSValue JS_GetPropertyValue(LEPUSContext *ctx, LEPUSValueConst this_obj,
+         if (unlikely(idx >= p->u.array.count)) goto slow_path;
+         return LEPUS_NewBigUint64(ctx, p->u.array.u.uint64_ptr[idx]);
+ #endif
++      case JS_CLASS_FLOAT16_ARRAY:
++        if (unlikely(idx >= p->u.array.count)) goto slow_path;
++        return __JS_NewFloat64(ctx, fromfp16(p->u.array.u.fp16_ptr[idx]));
+       case JS_CLASS_FLOAT32_ARRAY:
+         if (unlikely(idx >= p->u.array.count)) goto slow_path;
+         return __JS_NewFloat64(ctx, p->u.array.u.float_ptr[idx]);
+@@ -9347,6 +9353,11 @@ int JS_SetPropertyValue(LEPUSContext *ctx, LEPUSValueConst this_obj,
+         }
+         break;
+ #endif
++      case JS_CLASS_FLOAT16_ARRAY:
++          if (JS_ToFloat64Free(ctx, &d, val)) return -1;
++          if (unlikely(idx >= (uint32_t)p->u.array.count)) goto ta_out_of_bound;
++          p->u.array.u.fp16_ptr[idx] = tofp16(d);
++        break;
+       case JS_CLASS_FLOAT32_ARRAY:
+         if (JS_ToFloat64Free(ctx, &d, val)) return -1;
+         if (unlikely(idx >= (uint32_t)p->u.array.count)) goto ta_out_of_bound;
+@@ -41804,6 +41815,11 @@ static LEPUSValue js_math_hypot(LEPUSContext *ctx, LEPUSValueConst this_val,
+ 
+ #else
+ 
++static double js_math_f16round(double a)
++{
++  return fromfp16(tofp16(a));
++}
++
+ QJS_STATIC LEPUSValue js_math_min_max(LEPUSContext *ctx,
+                                       LEPUSValueConst this_val, int argc,
+                                       LEPUSValueConst *argv, int magic) {
+@@ -42005,6 +42021,7 @@ static const LEPUSCFunctionListEntry js_math_funcs[] = {
+     LEPUS_CFUNC_SPECIAL_DEF("cbrt", 1, f_f, cbrt),
+     LEPUS_CFUNC_DEF("hypot", 2, js_math_hypot),
+     LEPUS_CFUNC_DEF("random", 0, js_math_random),
++    LEPUS_CFUNC_SPECIAL_DEF("f16round", 1, f_f, js_math_f16round),
+     LEPUS_CFUNC_SPECIAL_DEF("fround", 1, f_f, js_math_fround),
+     LEPUS_CFUNC_DEF("imul", 2, js_math_imul),
+     LEPUS_CFUNC_DEF("clz32", 1, js_math_clz32),
+@@ -54111,7 +54128,9 @@ QJS_STATIC LEPUSValue js_typed_array_fill(LEPUSContext *ctx,
+   {
+     double d;
+     if (LEPUS_ToFloat64(ctx, &d, argv[0])) return LEPUS_EXCEPTION;
+-    if (p->class_id == JS_CLASS_FLOAT32_ARRAY) {
++    if (p->class_id == JS_CLASS_FLOAT16_ARRAY) {
++      v64 = tofp16(d);
++    } else if (p->class_id == JS_CLASS_FLOAT32_ARRAY) {
+       union {
+         float f;
+         uint32_t u32;
+@@ -54797,6 +54816,7 @@ QJS_STATIC LEPUSValue js_typed_array_indexOf(LEPUSContext *ctx,
+   int64_t v64;
+   double d;
+   float f;
++  uint16_t hf;
+ 
+   len = js_typed_array_get_length_internal(ctx, this_val);
+   if (len < 0) goto exception;
+@@ -54925,6 +54945,50 @@ QJS_STATIC LEPUSValue js_typed_array_indexOf(LEPUSContext *ctx,
+         }
+       }
+       break;
++    case JS_CLASS_FLOAT16_ARRAY:
++      if (is_big)
++        break;
++      if (isnan(d))
++      {
++        const uint16_t *pv = p->u.array.u.fp16_ptr;
++        /* special case: indexOf returns -1, includes finds NaN */
++        if (special != special_includes)
++          goto done;
++        for (; k != stop; k += inc)
++        {
++          if (isfp16nan(pv[k]))
++          {
++            res = k;
++            break;
++          }
++        }
++      }
++      else if (d == 0)
++      {
++        // special case: includes also finds negative zero
++        const uint16_t *pv = p->u.array.u.fp16_ptr;
++        for (; k != stop; k += inc)
++        {
++          if (isfp16zero(pv[k]))
++          {
++            res = k;
++            break;
++          }
++        }
++      }
++      else if (hf = tofp16(d), d == fromfp16(hf))
++      {
++        const uint16_t *pv = p->u.array.u.fp16_ptr;
++        for (; k != stop; k += inc)
++        {
++          if (pv[k] == hf)
++          {
++            res = k;
++            break;
++          }
++        }
++      }
++      break;
+     case JS_CLASS_FLOAT32_ARRAY:
+       if (is_big) break;
+       if (isnan(d)) {
+@@ -55264,6 +55328,11 @@ static int js_TA_cmp_uint64(const void *a, const void *b, void *opaque) {
+ }
+ #endif
+ 
++QJS_STATIC int js_TA_cmp_float16(const void *a, const void *b, void *opaque) {
++  return js_cmp_doubles(fromfp16(*(const uint16_t *)a),
++                        fromfp16(*(const uint16_t *)b));
++}
++
+ QJS_STATIC int js_TA_cmp_float32(const void *a, const void *b, void *opaque) {
+   return js_cmp_doubles(*(const float *)a, *(const float *)b);
+ }
+@@ -55306,6 +55375,11 @@ static LEPUSValue js_TA_get_uint64(LEPUSContext *ctx, const void *a) {
+ }
+ #endif
+ 
++QJS_STATIC LEPUSValue js_TA_get_float16(LEPUSContext *ctx, const void *a)
++{
++  return __JS_NewFloat64(ctx, fromfp16(*(const uint16_t *)a));
++}
++
+ QJS_STATIC LEPUSValue js_TA_get_float32(LEPUSContext *ctx, const void *a) {
+   return __JS_NewFloat64(ctx, *(const float *)a);
+ }
+@@ -55428,6 +55502,10 @@ QJS_STATIC LEPUSValue js_typed_array_sort(LEPUSContext *ctx,
+         tsc.cmpfun = js_TA_cmp_uint64;
+         break;
+ #endif
++      case JS_CLASS_FLOAT16_ARRAY:
++        tsc.getfun = js_TA_get_float16;
++        cmpfun = js_TA_cmp_float16;
++        break;
+       case JS_CLASS_FLOAT32_ARRAY:
+         tsc.getfun = js_TA_get_float32;
+         tsc.cmpfun = js_TA_cmp_float32;
+@@ -55942,6 +56020,12 @@ LEPUSValue js_dataview_getValue(LEPUSContext *ctx, LEPUSValueConst this_obj,
+       return LEPUS_NewBigUint64(ctx, v);
+     } break;
+ #endif
++    case JS_CLASS_FLOAT16_ARRAY: {
++      uint16_t v;
++      v = get_u16(ptr);
++      if (is_swap) v = bswap16(v);
++      return __JS_NewFloat64(ctx, fromfp16(v));
++    }
+     case JS_CLASS_FLOAT32_ARRAY: {
+       union {
+         float f;
+@@ -55997,14 +56081,22 @@ LEPUSValue js_dataview_setValue(LEPUSContext *ctx, LEPUSValueConst this_obj,
+   {
+     double d;
+     if (LEPUS_ToFloat64(ctx, &d, val)) return LEPUS_EXCEPTION;
+-    if (class_id == JS_CLASS_FLOAT32_ARRAY) {
+-      union {
++    if (class_id == JS_CLASS_FLOAT16_ARRAY)
++    {
++        v = tofp16(d);
++    }
++    else if (class_id == JS_CLASS_FLOAT32_ARRAY)
++    {
++      union
++      {
+         float f;
+         uint32_t i;
+       } u;
+       u.f = d;
+       v = u.i;
+-    } else {
++    }
++    else
++    {
+       JSFloat64Union u;
+       u.d = d;
+       v64 = u.u64;
+@@ -56028,6 +56120,7 @@ LEPUSValue js_dataview_setValue(LEPUSContext *ctx, LEPUSValueConst this_obj,
+       break;
+     case JS_CLASS_INT16_ARRAY:
+     case JS_CLASS_UINT16_ARRAY:
++    case JS_CLASS_FLOAT16_ARRAY:
+       if (is_swap) v = bswap16(v);
+       put_u16(ptr, v);
+       break;
+@@ -56766,6 +56859,14 @@ LEPUSTypedArrayType LEPUS_GetTypedArrayType(LEPUSContext *ctx,
+       return LEPUS_TYPED_INT32_ARRAY;
+     case JS_CLASS_UINT32_ARRAY:
+       return LEPUS_TYPED_UINT32_ARRAY;
++    #ifdef CONFIG_BIGNUM
++    case JS_CLASS_BIG_INT64_ARRAY:
++      return LEPUS_TYPED_BIG_INT64_ARRAY;
++    case JS_CLASS_BIG_UINT64_ARRAY:
++      return LEPUS_TYPED_BIG_UINT64_ARRAY;
++    #endif
++    case JS_CLASS_FLOAT16_ARRAY:
++      return LEPUS_TYPED_FLOAT16_ARRAY;
+     case JS_CLASS_FLOAT32_ARRAY:
+       return LEPUS_TYPED_FLOAT32_ARRAY;
+     case JS_CLASS_FLOAT64_ARRAY:
+@@ -56782,11 +56883,6 @@ LEPUS_BOOL LEPUS_IsDataView(LEPUSContext *ctx, LEPUSValueConst val) {
+   return p->class_id == JS_CLASS_DATAVIEW;
+ }
+ 
+-LEPUSClassID LEPUS_GetTypedArrayClassID(LEPUSTypedArrayType type) {
+-  if (type == LEPUS_TYPED_UNKNOW) return -1;
+-  return (type - LEPUS_TYPED_UINT8C_ARRAY) + JS_CLASS_UINT8C_ARRAY;
+-}
+-
+ class ObjectCloneState {
+  public:
+   using key_t = LEPUSObject *;
+-- 
+2.48.1
+

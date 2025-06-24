@@ -1,8 +1,8 @@
 /**
- * Generated on: 2025-04-14 08:27:22
+ * Generated on: 2025-06-24 17:01:53
  * Source file: hako.h
- * Git commit: 1ac71aadb54d23306f1bee8b1b982128dfc4cf4f
- * Git branch: main
+ * Git commit: 7a9d6e411817d8012facedac0694be2cee4cb846
+ * Git branch: next
  * Git author: andrew <1297077+andrewmd5@users.noreply.github.com>
  * Git remote: https://github.com/andrewmd5/hako.git
  */
