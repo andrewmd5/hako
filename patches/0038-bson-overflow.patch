@@ -1,0 +1,31 @@
+From dfdbf4271b35fd8bb1f14e3e62265690e416fce8 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 24 Jun 2025 15:10:25 +0900
+Subject: [PATCH] fixed buffer overflow in BJSON String and BigInt reader
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 9d863f4..b2d89b5 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -34356,11 +34356,11 @@ QJS_STATIC JSString *JS_ReadString(BCReaderState *s) {
+   if (bc_get_leb128(s, &len)) return NULL;
+   is_wide_char = len & 1;
+   len >>= 1;
+-  p = js_alloc_string(s->ctx, len, is_wide_char);
+   if (len > JS_STRING_LEN_MAX) {
+-      LEPUS_ThrowInternalError(s->ctx, "string too long");
+-      return NULL;
++    LEPUS_ThrowInternalError(s->ctx, "string too long");
++    return NULL;
+   }
++  p = js_alloc_string(s->ctx, len, is_wide_char);
+   if (!p) {
+     s->error_state = -1;
+     return NULL;
+-- 
+2.48.1
+
