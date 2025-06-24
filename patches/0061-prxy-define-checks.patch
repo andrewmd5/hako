@@ -1,0 +1,234 @@
+From 4f711d6c84f20c690cdc8b68a8c01c81d330c582 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 24 Jun 2025 20:25:35 +0900
+Subject: [PATCH] fixed checks in Proxy defineProperty
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 159 +++++++++++++---------
+ 1 file changed, 92 insertions(+), 67 deletions(-)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 49064c2..52174b0 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -9527,35 +9527,35 @@ QJS_STATIC int JS_CreateProperty(LEPUSContext *ctx, LEPUSObject *p, JSAtom prop,
+ }
+ 
+ /* return FALSE if not OK */
+-QJS_STATIC BOOL check_define_prop_flags(int prop_flags, int flags) {
+-  BOOL has_accessor, is_getset;
+-
+-  if (!(prop_flags & LEPUS_PROP_CONFIGURABLE)) {
+-    if ((flags & (LEPUS_PROP_HAS_CONFIGURABLE | LEPUS_PROP_CONFIGURABLE)) ==
+-        (LEPUS_PROP_HAS_CONFIGURABLE | LEPUS_PROP_CONFIGURABLE)) {
+-      return FALSE;
+-    }
+-    if ((flags & LEPUS_PROP_HAS_ENUMERABLE) &&
+-        (flags & LEPUS_PROP_ENUMERABLE) != (prop_flags & LEPUS_PROP_ENUMERABLE))
+-      return FALSE;
+-  }
+-  if (flags & (LEPUS_PROP_HAS_VALUE | LEPUS_PROP_HAS_WRITABLE |
+-               LEPUS_PROP_HAS_GET | LEPUS_PROP_HAS_SET)) {
++QJS_STATIC BOOL check_define_prop_flags(int prop_flags, int flags)
++{
++    BOOL has_accessor, is_getset;
+     if (!(prop_flags & LEPUS_PROP_CONFIGURABLE)) {
+-      has_accessor = ((flags & (LEPUS_PROP_HAS_GET | LEPUS_PROP_HAS_SET)) != 0);
+-      is_getset = ((prop_flags & LEPUS_PROP_TMASK) == LEPUS_PROP_GETSET);
+-      if (has_accessor != is_getset) return FALSE;
+-      if (!has_accessor && !is_getset && !(prop_flags & LEPUS_PROP_WRITABLE)) {
+-        /* not writable: cannot set the writable bit */
+-        if ((flags & (LEPUS_PROP_HAS_WRITABLE | LEPUS_PROP_WRITABLE)) ==
+-            (LEPUS_PROP_HAS_WRITABLE | LEPUS_PROP_WRITABLE))
+-          return FALSE;
+-      }
++        if ((flags & (LEPUS_PROP_HAS_CONFIGURABLE | LEPUS_PROP_CONFIGURABLE)) ==
++            (LEPUS_PROP_HAS_CONFIGURABLE | LEPUS_PROP_CONFIGURABLE)) {
++            return FALSE;
++        }
++        if ((flags & LEPUS_PROP_HAS_ENUMERABLE) &&
++            (flags & LEPUS_PROP_ENUMERABLE) != (prop_flags & LEPUS_PROP_ENUMERABLE))
++            return FALSE;
++        if (flags & (LEPUS_PROP_HAS_VALUE | LEPUS_PROP_HAS_WRITABLE |
++                     LEPUS_PROP_HAS_GET | LEPUS_PROP_HAS_SET)) {
++            has_accessor = ((flags & (LEPUS_PROP_HAS_GET | LEPUS_PROP_HAS_SET)) != 0);
++            is_getset = ((prop_flags & LEPUS_PROP_TMASK) == LEPUS_PROP_GETSET);
++            if (has_accessor != is_getset)
++                return FALSE;
++            if (!is_getset && !(prop_flags & LEPUS_PROP_WRITABLE)) {
++                /* not writable: cannot set the writable bit */
++                if ((flags & (LEPUS_PROP_HAS_WRITABLE | LEPUS_PROP_WRITABLE)) ==
++                    (LEPUS_PROP_HAS_WRITABLE | LEPUS_PROP_WRITABLE))
++                    return FALSE;
++            }
++        }
+     }
+-  }
+-  return TRUE;
++    return TRUE;
+ }
+ 
++
+ /* ensure that the shape can be safely modified */
+ QJS_STATIC int js_shape_prepare_update(LEPUSContext *ctx, LEPUSObject *p,
+                                        JSShapeProperty **pprs) {
+@@ -47558,11 +47558,11 @@ QJS_STATIC int js_proxy_get_own_property(LEPUSContext *ctx,
+   return ret;
+ }
+ 
+-QJS_STATIC int js_proxy_define_own_property(LEPUSContext *ctx,
+-                                            LEPUSValueConst obj, JSAtom prop,
+-                                            LEPUSValueConst val,
+-                                            LEPUSValueConst getter,
+-                                            LEPUSValueConst setter, int flags) {
++static int js_proxy_define_own_property(LEPUSContext *ctx, LEPUSValueConst obj,
++                                        LEPUSAtom prop, LEPUSValueConst val,
++                                        LEPUSValueConst getter, LEPUSValueConst setter,
++                                        int flags)
++{
+   JSProxyData *s;
+   LEPUSValue method, ret1, prop_val, desc_val;
+   int res, ret;
+@@ -47570,20 +47570,22 @@ QJS_STATIC int js_proxy_define_own_property(LEPUSContext *ctx,
+   LEPUSValueConst args[3];
+   LEPUSPropertyDescriptor desc;
+   BOOL setting_not_configurable;
+-
+   s = get_proxy_method(ctx, &method, obj, JS_ATOM_defineProperty);
+-  if (!s) return -1;
+-  if (LEPUS_IsUndefined(method)) {
+-    return JS_DefineProperty_RC(ctx, s->target, prop, val, getter, setter,
+-                                flags);
++  if (!s)
++    return -1;
++  if (LEPUS_IsUndefined(method))
++  {
++    return LEPUS_DefineProperty(ctx, s->target, prop, val, getter, setter, flags);
+   }
+-  prop_val = JS_AtomToValue_RC(ctx, prop);
+-  if (LEPUS_IsException(prop_val)) {
++  prop_val = LEPUS_AtomToValue(ctx, prop);
++  if (LEPUS_IsException(prop_val))
++  {
+     LEPUS_FreeValue(ctx, method);
+     return -1;
+   }
+   desc_val = js_create_desc(ctx, val, getter, setter, flags);
+-  if (LEPUS_IsException(desc_val)) {
++  if (LEPUS_IsException(desc_val))
++  {
+     LEPUS_FreeValue(ctx, prop_val);
+     LEPUS_FreeValue(ctx, method);
+     return -1;
+@@ -47594,56 +47596,79 @@ QJS_STATIC int js_proxy_define_own_property(LEPUSContext *ctx,
+   ret1 = JS_CallFree(ctx, method, s->handler, 3, args);
+   LEPUS_FreeValue(ctx, prop_val);
+   LEPUS_FreeValue(ctx, desc_val);
+-  if (LEPUS_IsException(ret1)) return -1;
+-  ret = JS_ToBoolFree_RC(ctx, ret1);
+-  if (!ret) {
+-    if (flags & LEPUS_PROP_THROW) {
++  if (LEPUS_IsException(ret1))
++    return -1;
++  ret = JS_ToBoolFree(ctx, ret1);
++  if (!ret)
++  {
++    if (flags & LEPUS_PROP_THROW)
++    {
+       LEPUS_ThrowTypeError(ctx, "proxy: defineProperty exception");
+       return -1;
+-    } else {
++    }
++    else
++    {
+       return 0;
+     }
+   }
+   p = LEPUS_VALUE_GET_OBJ(s->target);
+   res = JS_GetOwnPropertyInternal(ctx, &desc, p, prop);
+-  if (res < 0) return -1;
+-  setting_not_configurable =
+-      ((flags & (LEPUS_PROP_HAS_CONFIGURABLE | LEPUS_PROP_CONFIGURABLE)) ==
+-       LEPUS_PROP_HAS_CONFIGURABLE);
+-  if (!res) {
+-    if (!p->extensible || setting_not_configurable) goto fail;
+-  } else {
+-    if (!check_define_prop_flags(desc.flags, flags) ||
+-        ((desc.flags & LEPUS_PROP_CONFIGURABLE) && setting_not_configurable)) {
++  if (res < 0)
++    return -1;
++  setting_not_configurable = ((flags & (LEPUS_PROP_HAS_CONFIGURABLE |
++                                        LEPUS_PROP_CONFIGURABLE)) ==
++                              LEPUS_PROP_HAS_CONFIGURABLE);
++  if (!res)
++  {
++    if (!p->extensible || setting_not_configurable)
++      goto fail;
++  }
++  else
++  {
++    if (!check_define_prop_flags(desc.flags, flags))
+       goto fail1;
+-    }
+-    if (flags & (LEPUS_PROP_HAS_GET | LEPUS_PROP_HAS_SET)) {
+-      if ((desc.flags & (LEPUS_PROP_GETSET | LEPUS_PROP_CONFIGURABLE)) ==
+-          LEPUS_PROP_GETSET) {
++    /* do the missing check from check_define_prop_flags() */
++    if (!(desc.flags & LEPUS_PROP_CONFIGURABLE))
++    {
++      if ((desc.flags & LEPUS_PROP_TMASK) == LEPUS_PROP_GETSET)
++      {
+         if ((flags & LEPUS_PROP_HAS_GET) &&
+-            !js_same_value(ctx, getter, desc.getter)) {
++            !js_same_value(ctx, getter, desc.getter))
++        {
+           goto fail1;
+         }
+         if ((flags & LEPUS_PROP_HAS_SET) &&
+-            !js_same_value(ctx, setter, desc.setter)) {
++            !js_same_value(ctx, setter, desc.setter))
++        {
+           goto fail1;
+         }
+       }
+-    } else if (flags & LEPUS_PROP_HAS_VALUE) {
+-      if ((desc.flags & (LEPUS_PROP_CONFIGURABLE | LEPUS_PROP_WRITABLE)) == 0 &&
+-          !js_same_value(ctx, val, desc.value)) {
+-      fail1:
+-        js_free_desc(ctx, &desc);
+-      fail:
+-        LEPUS_ThrowTypeError(ctx, "proxy: inconsistent defineProperty");
+-        return -1;
++      else if (!(desc.flags & LEPUS_PROP_WRITABLE))
++      {
++        if ((flags & LEPUS_PROP_HAS_VALUE) &&
++            !js_same_value(ctx, val, desc.value))
++        {
++          goto fail1;
++        }
+       }
+     }
++    /* additional checks */
++    if ((desc.flags & LEPUS_PROP_CONFIGURABLE) && setting_not_configurable)
++      goto fail1;
++    if ((desc.flags & LEPUS_PROP_TMASK) != LEPUS_PROP_GETSET &&
++        (desc.flags & (LEPUS_PROP_CONFIGURABLE | LEPUS_PROP_WRITABLE)) == LEPUS_PROP_WRITABLE &&
++        (flags & (LEPUS_PROP_HAS_WRITABLE | LEPUS_PROP_WRITABLE)) == LEPUS_PROP_HAS_WRITABLE)
++    {
++    fail1:
++      js_free_desc(ctx, &desc);
++    fail:
++      LEPUS_ThrowTypeError(ctx, "proxy: inconsistent defineProperty");
++      return -1;
++    }
+     js_free_desc(ctx, &desc);
+   }
+   return 1;
+ }
+-
+ QJS_STATIC int js_proxy_delete_property(LEPUSContext *ctx, LEPUSValueConst obj,
+                                         JSAtom atom) {
+   JSProxyData *s;
+-- 
+2.48.1
+
