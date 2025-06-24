@@ -1,0 +1,26 @@
+From f71649975194617250648ef6bfc1fbca929084fc Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 24 Jun 2025 15:30:30 +0900
+Subject: [PATCH] fixed parsing of function definition
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 5c856c1..5bb23a4 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -32778,7 +32778,8 @@ QJS_STATIC __exception int js_parse_function_decl2(
+   push_scope(s); /* enter body scope: fd->scope_level = 1 */
+   fd->body_scope = fd->scope_level;
+ 
+-  if (s->token.val == TOK_ARROW) {
++  if (s->token.val == TOK_ARROW && func_type == JS_PARSE_FUNC_ARROW)
++  {
+     if (next_token(s)) goto fail;
+ 
+     if (s->token.val != '{') {
+-- 
+2.48.1
+
