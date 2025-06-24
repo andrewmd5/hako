@@ -1,0 +1,136 @@
+From 388011f3ab9f26ae8b8af662fcc86c40d97d2963 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 24 Jun 2025 18:20:00 +0900
+Subject: [PATCH] optimized and fixed JS_AtomIsNumericIndex1(): 'NaN' is also a
+ number
+
+---
+ .../quickjs/include/quickjs-atom.h            |  4 +
+ src/interpreter/quickjs/source/quickjs.cc     | 81 +++++++------------
+ 2 files changed, 33 insertions(+), 52 deletions(-)
+
+diff --git a/src/interpreter/quickjs/include/quickjs-atom.h b/src/interpreter/quickjs/include/quickjs-atom.h
+index 5d567ef..61a30a1 100644
+--- a/src/interpreter/quickjs/include/quickjs-atom.h
++++ b/src/interpreter/quickjs/include/quickjs-atom.h
+@@ -174,6 +174,10 @@ DEF(reason, "reason")
+ DEF(bigint, "bigint")
+ DEF(bigfloat, "bigfloat")
+ #endif
++DEF(minus_zero, "-0")
++DEF(Infinity, "Infinity")
++DEF(minus_Infinity, "-Infinity")
++DEF(NaN, "NaN")
+ #ifdef CONFIG_ATOMICS
+ DEF(not_equal, "not-equal")
+ DEF(timed_out, "timed-out")
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 4a629e8..1ec850e 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -3105,73 +3105,50 @@ QJS_STATIC LEPUSValue JS_AtomIsNumericIndex1(LEPUSContext *ctx, JSAtom atom) {
+   LEPUSRuntime *rt = ctx->rt;
+   JSAtomStruct *p1;
+   JSString *p;
+-  int c, len, ret;
++  int c, ret;
+   LEPUSValue num, str;
+ 
+   if (__JS_AtomIsTaggedInt(atom))
+-    return LEPUS_NewInt32(ctx, __JS_AtomToUInt32(atom));
++      return LEPUS_NewInt32(ctx, __JS_AtomToUInt32(atom));
+   assert(atom < rt->atom_size);
+   p1 = rt->atom_array[atom];
+-  if (p1->atom_type != JS_ATOM_TYPE_STRING) return LEPUS_UNDEFINED;
+-  p = p1;
+-  len = p->len;
+-  if (p->is_wide_char) {
+-    const uint16_t *r = p->u.str16, *r_end = p->u.str16 + len;
+-    if (r >= r_end) return LEPUS_UNDEFINED;
+-    c = *r;
+-    if (c == '-') {
+-      if (r >= r_end) return LEPUS_UNDEFINED;
+-      r++;
+-      c = *r;
+-      /* -0 case is specific */
+-      if (c == '0' && len == 2) goto minus_zero;
+-    }
+-    /* XXX: should test NaN, but the tests do not check it */
+-    if (!is_num(c)) {
+-      /* XXX: String should be normalized, therefore 8-bit only */
+-      const uint16_t nfinity16[7] = {'n', 'f', 'i', 'n', 'i', 't', 'y'};
+-      if (!(c == 'I' && (r_end - r) == 8 &&
+-            !memcmp(r + 1, nfinity16, sizeof(nfinity16))))
+-        return LEPUS_UNDEFINED;
+-    }
+-  } else {
+-    const uint8_t *r, *r_end;
+-    r = p->u.str8;
+-    r_end = p->u.str8 + len;
+-    if (r >= r_end) return LEPUS_UNDEFINED;
+-    c = *r;
+-    if (c == '-') {
+-      if (r >= r_end) return LEPUS_UNDEFINED;
+-      r++;
+-      c = *r;
+-      /* -0 case is specific */
+-      if (c == '0' && len == 2) {
+-      minus_zero:
+-        return __JS_NewFloat64(ctx, -0.0);
+-      }
+-    }
+-    if (!is_num(c)) {
+-      if (!(c == 'I' && (r_end - r) == 8 && !memcmp(r + 1, "nfinity", 7)))
+-        return LEPUS_UNDEFINED;
+-    }
++  if (p1->atom_type != JS_ATOM_TYPE_STRING)
++      return LEPUS_UNDEFINED;
++  switch(atom) {
++  case JS_ATOM_minus_zero:
++      return __JS_NewFloat64(ctx, -0.0);
++  case JS_ATOM_Infinity:
++      return __JS_NewFloat64(ctx, INFINITY);
++  case JS_ATOM_minus_Infinity:
++      return __JS_NewFloat64(ctx, -INFINITY);
++  case JS_ATOM_NaN:
++      return __JS_NewFloat64(ctx, NAN);
++  default:
++      break;
+   }
+-  /* XXX: bignum: would be better to only accept integer to avoid
+-     relying on current floating point precision */
++  p = p1;
++  if (p->len == 0)
++      return LEPUS_UNDEFINED;
++  c = string_get(p, 0);
++  if (!is_num(c) && c != '-')
++      return LEPUS_UNDEFINED;
+   /* this is ECMA CanonicalNumericIndexString primitive */
+   num = JS_ToNumber(ctx, LEPUS_MKPTR(LEPUS_TAG_STRING, p));
+-  if (LEPUS_IsException(num)) return num;
+-  str = JS_ToString_RC(ctx, num);
+-  if (LEPUS_IsException(str)) {
++  if (LEPUS_IsException(num))
++      return num;
++  str = LEPUS_ToString(ctx, num);
++  if (LEPUS_IsException(str))
++  {
+     LEPUS_FreeValue(ctx, num);
+-    return str;
++      return str;
+   }
+   ret = js_string_compare(ctx, p, LEPUS_VALUE_GET_STRING(str));
+   LEPUS_FreeValue(ctx, str);
+   if (ret == 0) {
+-    return num;
++      return num;
+   } else {
+     LEPUS_FreeValue(ctx, num);
+-    return LEPUS_UNDEFINED;
++      return LEPUS_UNDEFINED;
+   }
+ }
+ 
+-- 
+2.48.1
+
