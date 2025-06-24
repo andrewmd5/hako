@@ -1,0 +1,32 @@
+From d130bb8a2b68a3ff28ed8ecd18b9a5dd6b0ca0ca Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 24 Jun 2025 18:56:49 +0900
+Subject: [PATCH] fix: setters cannot have rest arguments
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 4d919fe..b824c37 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -32637,6 +32637,7 @@ QJS_STATIC __exception int js_parse_function_decl2(
+       int idx, has_initializer;
+ 
+       if (s->token.val == TOK_ELLIPSIS) {
++        if (func_type == JS_PARSE_FUNC_SETTER) goto fail_accessor;
+         fd->has_simple_parameter_list = FALSE;
+         rest = TRUE;
+         if (next_token(s)) goto fail;
+@@ -32749,6 +32750,7 @@ QJS_STATIC __exception int js_parse_function_decl2(
+     }
+     if ((func_type == JS_PARSE_FUNC_GETTER && fd->arg_count != 0) ||
+         (func_type == JS_PARSE_FUNC_SETTER && fd->arg_count != 1)) {
++    fail_accessor:
+       js_parse_error(s, "invalid number of arguments for getter or setter");
+       goto fail;
+     }
+-- 
+2.48.1
+
