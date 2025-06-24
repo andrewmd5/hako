@@ -6,7 +6,7 @@ import {
   type PropertyDescriptor,
   PropertyEnumFlags,
   EqualOp,
-  PromiseState,
+  type PromiseState,
   IsEqualOp,
   LEPUS_BOOLToBoolean,
   type JSType,
@@ -358,9 +358,15 @@ export class VMValue implements Disposable {
         return "Uint32Array";
       case 7:
         return "Int32Array";
-      case 8:
-        return "Float32Array";
+        case 8:
+         return "BigInt64Array";
       case 9:
+        return "BigUint64Array";
+      case 10:
+        return "Float16Array";
+      case 11:
+        return "Float32Array";
+      case 12:
         return "Float64Array";
       default:
         return "Unknown";
@@ -769,15 +775,25 @@ export class VMValue implements Disposable {
    * @throws Error if the value is not a promise
    * @throws {PrimJSUseAfterFree} If the value has been disposed
    */
-  getPromiseState(): PromiseState | null {
+  getPromiseState(): PromiseState | undefined {
     this.assertAlive();
     if (!this.isPromise()) {
       throw new Error("Value is not a promise");
     }
-    return this.context.container.exports.HAKO_PromiseState(
+    switch (this.context.container.exports.HAKO_PromiseState(
       this.context.pointer,
       this.handle
-    );
+    )) {
+      case 0:
+        return "pending";
+      case 1:
+        return "fulfilled";
+      case 2:
+        return "rejected";
+      default:
+        return undefined;
+
+    }
   }
 
   /**
@@ -794,7 +810,7 @@ export class VMValue implements Disposable {
     }
 
     const state = this.getPromiseState();
-    if (state !== PromiseState.Fulfilled && state !== PromiseState.Rejected) {
+    if (state !== "fulfilled" && state !== "rejected") {
       return undefined;
     }
 

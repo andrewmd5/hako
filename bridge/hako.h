@@ -48,7 +48,6 @@ extern "C"
 
     typedef enum
     {
-        HAKO_TYPED_UNKNOWN = 0,
         HAKO_TYPED_UINT8_ARRAY = 1,
         HAKO_TYPED_UINT8C_ARRAY = 2,
         HAKO_TYPED_INT8_ARRAY = 3,
@@ -56,8 +55,11 @@ extern "C"
         HAKO_TYPED_INT16_ARRAY = 5,
         HAKO_TYPED_UINT32_ARRAY = 6,
         HAKO_TYPED_INT32_ARRAY = 7,
-        HAKO_TYPED_FLOAT32_ARRAY = 8,
-        HAKO_TYPED_FLOAT64_ARRAY = 9
+        HAKO_TYPED_BIG_INT64_ARRAY = 8,
+        HAKO_TYPED_BIG_UINT64_ARRAY = 9,
+        HAKO_TYPED_FLOAT16_ARRAY = 10,
+        HAKO_TYPED_FLOAT32_ARRAY = 11,
+        HAKO_TYPED_FLOAT64_ARRAY = 12
     } HAKO_TypedArrayType;
 
     typedef enum IsEqualOp

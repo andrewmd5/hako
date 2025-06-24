@@ -1,0 +1,27 @@
+From b93b4bc1f5ed66ea3adcf1714a39018c0f0605a6 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 24 Jun 2025 20:27:17 +0900
+Subject: [PATCH] fixed detached TypedArray handling in Atomics operations
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 52174b0..7d8ca0a 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -56309,6 +56309,10 @@ static void *js_atomics_get_ptr(LEPUSContext *ctx, int *psize_log2,
+   if (LEPUS_ToIndex(ctx, &idx, idx_val)) {
+     return NULL;
+   }
++  if (abuf->detached) {
++    JS_ThrowTypeErrorDetachedArrayBuffer(ctx);
++    return NULL;
++  }
+   if (idx >= p->u.array.count) {
+     LEPUS_ThrowRangeError(ctx, "out-of-bound access");
+     return NULL;
+-- 
+2.48.1
+

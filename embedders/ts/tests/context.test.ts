@@ -601,6 +601,42 @@ fibonacci(100);
   });
 
   describe("Promise handling", () => {
+
+    it("should resolve already-settled async function promises without deadlocking", async () => {
+      // This test reproduces the deadlock issue from the GitHub issue
+      const code = `export const run = async (name) => { return "Hello" + name };`;
+
+      using result = context.evalCode(code, { type: "module" });
+      expect(result.error).toBeUndefined();
+
+      using mod = result.unwrap();
+      using runFunction = mod.getProperty("run");
+
+      // Call the async function - this creates an already-settled promise
+      using arg = context.newValue("Test");
+      console.log("Calling runFunction with arg:", arg.asString());
+      using callResult = context.callFunction(runFunction, null, arg);
+      using promiseHandle = callResult.unwrap();
+      console.log("Promise handle created:");
+
+      // Verify it's a promise and already settled
+      expect(promiseHandle.isPromise()).toBe(true);
+     
+
+      // Before the fix: this would deadlock because the promise is already settled
+      // After the fix: this should resolve without blocking
+      const startTime = Date.now();
+      console.log("Resolving promise handle...");
+      using resolvedResult = await context.resolvePromise(promiseHandle);
+      const endTime = Date.now();
+
+      // Should resolve quickly (within reasonable time, not hang indefinitely)
+      expect(endTime - startTime).toBeLessThan(1000); // Should be much faster than 1 second
+
+      using resolvedHandle = resolvedResult.unwrap();
+      expect(resolvedHandle.asString()).toBe("HelloTest");
+    });
+
     it("should handle promise resolution", async () => {
       const fakeFileSystem = new Map([["example.txt", "Example file content"]]);
       using readFileHandle = context.newFunction("readFile", (pathHandle) => {

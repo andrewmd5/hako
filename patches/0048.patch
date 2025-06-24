@@ -1,0 +1,61 @@
+From 04a0220878e503908b60d998de4300d956d6de17 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 24 Jun 2025 17:18:28 +0900
+Subject: [PATCH] feat: Promise.try
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 31 +++++++++++++++++++++++
+ 1 file changed, 31 insertions(+)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index afa6860..855b4d5 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -49812,6 +49812,36 @@ QJS_STATIC LEPUSValue js_promise_withResolvers(LEPUSContext *ctx,
+     return obj;
+ }
+ 
++QJS_STATIC LEPUSValue js_promise_try(LEPUSContext *ctx, LEPUSValueConst this_val,
++                                     int argc, LEPUSValueConst *argv)
++{
++  LEPUSValue result_promise, resolving_funcs[2], ret, ret2;
++  BOOL is_reject = 0;
++
++  if (!LEPUS_IsObject(this_val))
++    return JS_ThrowTypeErrorNotAnObject(ctx);
++  result_promise = js_new_promise_capability(ctx, resolving_funcs, this_val);
++  if (LEPUS_IsException(result_promise))
++    return result_promise;
++  ret = LEPUS_Call(ctx, argv[0], LEPUS_UNDEFINED, argc - 1, argv + 1);
++  if (LEPUS_IsException(ret))
++  {
++    is_reject = 1;
++    ret = LEPUS_GetException(ctx);
++  }
++  ret2 = LEPUS_Call(ctx, resolving_funcs[is_reject], LEPUS_UNDEFINED, 1, (LEPUSValueConst *)&ret);
++  LEPUS_FreeValue(ctx, resolving_funcs[0]);
++  LEPUS_FreeValue(ctx, resolving_funcs[1]);
++  LEPUS_FreeValue(ctx, ret);
++  if (LEPUS_IsException(ret2))
++  {
++    LEPUS_FreeValue(ctx, result_promise);
++    return ret2;
++  }
++  LEPUS_FreeValue(ctx, ret2);
++  return result_promise;
++}
++
+ QJS_STATIC __exception int remainingElementsCount_add(
+     LEPUSContext *ctx, LEPUSValueConst resolve_element_env, int addend) {
+   LEPUSValue val;
+@@ -50438,6 +50468,7 @@ QJS_STATIC LEPUSValue js_promise_finally(LEPUSContext *ctx,
+ static const LEPUSCFunctionListEntry js_promise_funcs[] = {
+     LEPUS_CFUNC_MAGIC_DEF("resolve", 1, js_promise_resolve, 0),
+     LEPUS_CFUNC_MAGIC_DEF("reject", 1, js_promise_resolve, 1),
++    LEPUS_CFUNC_MAGIC_DEF("any", 1, js_promise_all, PROMISE_MAGIC_any),
+     LEPUS_CFUNC_MAGIC_DEF("all", 1, js_promise_all, PROMISE_MAGIC_all),
+     LEPUS_CFUNC_MAGIC_DEF("allSettled", 1, js_promise_all,
+                           PROMISE_MAGIC_allSettled),
+-- 
+2.48.1
+

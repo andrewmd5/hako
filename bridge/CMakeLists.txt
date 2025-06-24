@@ -27,8 +27,8 @@ set(CMAKE_STRIP "${WASI_SDK_PATH}/bin/llvm-strip")
 
 # Set WASI sysroot and target
 set(CMAKE_SYSROOT "${WASI_SDK_PATH}/share/wasi-sysroot")
-set(CMAKE_C_COMPILER_TARGET "wasm32-wasi-threads")
-set(CMAKE_CXX_COMPILER_TARGET "wasm32-wasi-threads")
+set(CMAKE_C_COMPILER_TARGET "wasm32-wasi")
+set(CMAKE_CXX_COMPILER_TARGET "wasm32-wasi")
 
 set(CMAKE_TRY_COMPILE_TARGET_TYPE "STATIC_LIBRARY")
 set(CMAKE_C_COMPILER_WORKS "1")
@@ -90,7 +90,7 @@ option(DISABLE_NANBOX "Disable nanbox" OFF)
 option(ENABLE_CODECACHE "Enable code cache" OFF)
 option(CACHE_PROFILE "Enable cache profile" OFF)
 option(ENABLE_MEM "Enable memory detection" OFF)
-option(ENABLE_ATOMICS "Enable Atomics" ON)
+option(ENABLE_ATOMICS "Enable Atomics" OFF)
 option(FORCE_GC "Enable force gc" OFF)
 option(ENABLE_ASAN "Enable address sanitizer" OFF)
 option(ENABLE_BIGNUM "Enable bignum" OFF)
@@ -110,6 +110,7 @@ add_compile_options(
   -D_WASI_EMULATED_MMAN
   -D_WASI_EMULATED_SIGNAL
   -D_WASI_EMULATED_PROCESS_CLOCKS
+  -DWASI_STACK_SIZE=${WASM_STACK_SIZE}
 )
 
 # Simplify for WASI
@@ -122,7 +123,7 @@ set(CMAKE_COMMON_FLAGS
     "${OPTIMIZATION_FLAGS} -fPIC -ffunction-sections -fdata-sections \
     -fno-short-enums -fno-strict-aliasing -Wall -Wextra -Wno-unused-parameter \
     -Wno-unused-function -faddrsig -Wno-c99-designator -Wno-unknown-warning-option \
-    -Wno-sign-compare -Wno-unused-but-set-variable -pthread -matomics -msimd128 -mmultivalue -mmutable-globals -mtail-call -msign-ext -mbulk-memory -mnontrapping-fptoint -mextended-const")
+    -Wno-sign-compare -Wno-unused-but-set-variable -msimd128 -mmultivalue -mmutable-globals -mtail-call -msign-ext -mbulk-memory -mnontrapping-fptoint -mextended-const")
 
 if(ENABLE_ASAN)
   add_definitions(-DHAKO_SANITIZE_LEAK)
@@ -281,7 +282,7 @@ set_target_properties(quickjs PROPERTIES
 
 # Add WASI-specific link options to the QuickJS library
 target_link_options(quickjs PRIVATE
-  "-Wl,--allow-undefined -Wl,wasi-emulated-signal -Wl,wasi-emulated-process-clocks -Wl,--shared-memory")
+  "-Wl,--allow-undefined -Wl,wasi-emulated-signal -Wl,wasi-emulated-process-clocks")
 
 # Build the hako WASM module
 set(hako_source
@@ -311,7 +312,6 @@ target_include_directories(hako_reactor PRIVATE
 # WASM-specific link options
 target_link_options(hako_reactor PRIVATE
     -mexec-model=reactor
-    -Wl,--import-memory,--export-memory
     -Wl,--no-entry
     -Wl,--export=malloc
     -Wl,--export=free

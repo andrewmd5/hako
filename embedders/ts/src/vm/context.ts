@@ -368,6 +368,7 @@ export class VMContext implements Disposable {
         `Expected a Promise-like value, received ${promiseLikeHandle.type}`
       );
     }
+
     using vmResolveResult = Scope.withScope((scope) => {
       const global = this.getGlobalObject();
       const vmPromise = scope.manage(global.getProperty("Promise"));
@@ -375,10 +376,35 @@ export class VMContext implements Disposable {
       const vmPromiseResolve = scope.manage(vmPromise?.getProperty("resolve"))!;
       return this.callFunction(vmPromiseResolve, vmPromise, promiseLikeHandle);
     });
+
     if (vmResolveResult.error) {
       return Promise.resolve(vmResolveResult);
     }
 
+    const resolvedPromise = vmResolveResult.value;
+
+    // Check if the promise is already settled
+    const state = resolvedPromise.getPromiseState();
+
+    if (state === "fulfilled") {
+      const result = resolvedPromise.getPromiseResult();
+      if (result) {
+        return Promise.resolve(this.success(result));
+      }
+        // This shouldn't happen for fulfilled promises, but handle gracefully
+        return Promise.resolve(this.success(this.newValue(undefined)));
+    }
+
+    if (state === "rejected") {
+      const error = resolvedPromise.getPromiseResult();
+      if (error) {
+        return Promise.resolve(this.fail(error));
+      }
+        // This shouldn't happen for rejected promises, but handle gracefully
+        return Promise.resolve(this.fail(this.newValue(undefined)));
+    }
+
+    // Promise is pending, set up async handlers
     return new Promise<VMContextResult<VMValue>>((resolve) => {
       Scope.withScope((scope) => {
         const resolveHandle = scope.manage(
@@ -393,7 +419,7 @@ export class VMContext implements Disposable {
           })
         );
 
-        const promiseHandle = scope.manage(vmResolveResult.value);
+        const promiseHandle = scope.manage(resolvedPromise);
         // biome-ignore lint/style/noNonNullAssertion: <explanation>
         const promiseThenHandle = scope.manage(
           promiseHandle.getProperty("then")

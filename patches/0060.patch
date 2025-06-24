@@ -1,0 +1,55 @@
+From 88134cbf93e0ac303e6bdcfed8c130feeb8a549e Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 24 Jun 2025 20:18:14 +0900
+Subject: [PATCH] fixed the delete operator with global variables
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 25 ++++++++++++++++++++++-
+ 1 file changed, 24 insertions(+), 1 deletion(-)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index b824c37..49064c2 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -10306,6 +10306,29 @@ int LEPUS_SetGlobalVar(LEPUSContext *ctx, JSAtom prop, LEPUSValue val,
+   return JS_SetGlobalVar_RC(ctx, prop, val, flag);
+ }
+ 
++/* return -1, FALSE or TRUE */
++static int JS_DeleteGlobalVar_RC(LEPUSContext *ctx, JSAtom prop)
++{
++    LEPUSObject *p;
++    JSShapeProperty *prs;
++    JSProperty *pr;
++    int ret;
++
++    /* 9.1.1.4.7 DeleteBinding ( N ) */
++    p = LEPUS_VALUE_GET_OBJ(ctx->global_var_obj);
++    prs = find_own_property(&pr, p, prop);
++    if (prs)
++        return FALSE; /* lexical variables cannot be deleted */
++    ret = LEPUS_HasProperty(ctx, ctx->global_obj, prop);
++    if (ret < 0)
++        return -1;
++    if (ret) {
++        return LEPUS_DeleteProperty(ctx, ctx->global_obj, prop, 0);
++    } else {
++        return TRUE;
++    }
++}
++
+ /* return -1, FALSE or TRUE. return FALSE if not configurable or
+    invalid object. return -1 in case of exception.
+    flags can be 0, LEPUS_PROP_THROW or LEPUS_PROP_THROW_STRICT */
+@@ -18704,7 +18727,7 @@ restart:
+         atom = get_u32(pc);
+         pc += 4;
+ 
+-        ret = LEPUS_DeleteProperty(ctx, ctx->global_obj, atom, 0);
++        ret = JS_DeleteGlobalVar_RC(ctx, atom);
+         if (unlikely(ret < 0)) goto exception;
+         *sp++ = LEPUS_NewBool(ctx, ret);
+       }
+-- 
+2.48.1
+

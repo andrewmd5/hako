@@ -585,17 +585,14 @@ export function evalOptionsToFlags(
 /**
  * JavaScript Promise states.
  */
-export enum PromiseState {
+export type PromiseState =
   /** Promise has not been resolved or rejected yet */
-  Pending = 0,
-
+  | "pending"
   /** Promise has been resolved with a value */
-  Fulfilled = 1,
-
+  | "fulfilled"
   /** Promise has been rejected with a reason */
-  Rejected = 2,
-}
-
+  | "rejected";
+  
 //=============================================================================
 // Equality Operations
 //=============================================================================
@@ -1031,5 +1028,8 @@ export type TypedArrayType =
   | "Int16Array"
   | "Uint32Array"
   | "Int32Array"
+  | "BigUint64Array"
+  | "BigInt64Array"
+  | "Float16Array"
   | "Float32Array"
   | "Float64Array";

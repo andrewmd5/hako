@@ -1,0 +1,27 @@
+From 75e4635fe4d8cc7cd4cbcb34b5d9fe723172f6b0 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 24 Jun 2025 18:21:47 +0900
+Subject: [PATCH] fixed memory leak in String constructor
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 1ec850e..f74003c 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -39962,7 +39962,9 @@ QJS_STATIC LEPUSValue js_string_constructor(LEPUSContext *ctx,
+     JSString *p1 = LEPUS_VALUE_GET_STRING(val);
+ 
+     obj = js_create_from_ctor(ctx, new_target, JS_CLASS_STRING);
+-    if (!LEPUS_IsException(obj)) {
++    if (LEPUS_IsException(obj)) {
++      LEPUS_FreeValue(ctx, val);
++    } else { 
+       JS_SetObjectData(ctx, obj, val);
+       JS_DefinePropertyValue_RC(ctx, obj, JS_ATOM_length,
+                                 LEPUS_NewInt32(ctx, p1->len), 0);
+-- 
+2.48.1
+

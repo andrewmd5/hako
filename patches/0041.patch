@@ -1,0 +1,66 @@
+From e983afe641fccd37cdb1097a35ba785ffd9e4b6d Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 24 Jun 2025 15:29:09 +0900
+Subject: [PATCH] Read byteOffset for detached buffers
+
+The spec [1] expects to read `byteOffset` even for detached buffers.
+
+Noticed a new test262 test [2] failed and there an an existing one we skipped
+as well for the same reason.
+
+[1] https://tc39.es/ecma262/#sec-%typedarray%.prototype.subarray
+[2] https://github.com/tc39/test262/blob/main/test/built-ins/TypedArray/prototype/subarray/byteoffset-with-detached-buffer.js
+---
+ src/interpreter/quickjs/source/quickjs.cc | 25 ++++++++++++++---------
+ 1 file changed, 15 insertions(+), 10 deletions(-)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 12a0a9c..5c856c1 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -55069,27 +55069,32 @@ QJS_STATIC LEPUSValue js_typed_array_subarray(LEPUSContext *ctx,
+                                               LEPUSValueConst this_val,
+                                               int argc, LEPUSValueConst *argv) {
+   LEPUSValueConst args[4];
+-  LEPUSValue arr, byteOffset, ta_buffer;
++  LEPUSValue arr, ta_buffer;
++  JSTypedArray *ta;
+   LEPUSObject *p;
+   int len, start, final, count, shift, offset;
+ 
+   p = get_typed_array(ctx, this_val, 0);
+-  if (!p) goto exception;
++  if (!p)
++    goto exception;
+   len = p->u.array.count;
+-  if (JS_ToInt32Clamp(ctx, &start, argv[0], 0, len, len)) goto exception;
++  if (JS_ToInt32Clamp(ctx, &start, argv[0], 0, len, len))
++    goto exception;
+ 
+   final = len;
+-  if (!LEPUS_IsUndefined(argv[1])) {
+-    if (JS_ToInt32Clamp(ctx, &final, argv[1], 0, len, len)) goto exception;
++  if (!LEPUS_IsUndefined(argv[1]))
++  {
++    if (JS_ToInt32Clamp(ctx, &final, argv[1], 0, len, len))
++      goto exception;
+   }
+   count = max_int(final - start, 0);
+-  byteOffset = js_typed_array_get_byteOffset(ctx, this_val, 0);
+-  if (LEPUS_IsException(byteOffset)) goto exception;
+   shift = typed_array_size_log2(p->class_id);
+-  offset = LEPUS_VALUE_GET_INT(byteOffset) + (start << shift);
+-  LEPUS_FreeValue(ctx, byteOffset);
++  ta = p->u.typed_array;
++  /* Read byteOffset (ta->offset) even if detached */
++  offset = ta->offset + (start << shift);
+   ta_buffer = js_typed_array_get_buffer(ctx, this_val, 0);
+-  if (LEPUS_IsException(ta_buffer)) goto exception;
++  if (LEPUS_IsException(ta_buffer))
++    goto exception;
+   args[0] = this_val;
+   args[1] = ta_buffer;
+   args[2] = LEPUS_NewInt32(ctx, offset);
+-- 
+2.48.1
+
