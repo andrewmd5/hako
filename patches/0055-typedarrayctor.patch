@@ -1,0 +1,27 @@
+From bcd036e766a45798d3e98d95473c952424edb600 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 24 Jun 2025 18:23:45 +0900
+Subject: [PATCH] the %TypedArray% Intrinsic Object should be a constructor
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index f74003c..4e6624b 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -56641,8 +56641,8 @@ void LEPUS_AddIntrinsicTypedArrays(LEPUSContext *ctx) {
+   JS_DefinePropertyValue_RC(ctx, typed_array_base_proto, JS_ATOM_toString, obj,
+                             LEPUS_PROP_WRITABLE | LEPUS_PROP_CONFIGURABLE);
+ 
+-  typed_array_base_func =
+-      LEPUS_NewCFunction(ctx, js_typed_array_base_constructor, "TypedArray", 0);
++  typed_array_base_func = LEPUS_NewCFunction2(ctx, js_typed_array_base_constructor,
++                              "TypedArray", 0, LEPUS_CFUNC_constructor_or_func, 0);
+   LEPUS_SetPropertyFunctionList(ctx, typed_array_base_func,
+                                 js_typed_array_base_funcs,
+                                 countof(js_typed_array_base_funcs));
+-- 
+2.48.1
+
