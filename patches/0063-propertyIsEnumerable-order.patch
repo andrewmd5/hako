@@ -1,0 +1,46 @@
+From a796df26679250e6260d838c398c85924e43db88 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 24 Jun 2025 20:30:49 +0900
+Subject: [PATCH] fixed operation order in
+ Object.prototype.propertyIsEnumerable()
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 10 ++++++----
+ 1 file changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 7d8ca0a..e2dcabf 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -35990,6 +35990,7 @@ QJS_STATIC __exception int JS_ObjectDefineProperties(
+   props = LEPUS_ToObject(ctx, properties);
+   if (LEPUS_IsException(props)) return -1;
+   p = LEPUS_VALUE_GET_OBJ(props);
++  /* XXX: not done in the same order as the spec */
+   if (JS_GetOwnPropertyNamesInternal(
+           ctx, &atoms, &len, p,
+           LEPUS_GPN_ENUM_ONLY | LEPUS_GPN_STRING_MASK | LEPUS_GPN_SYMBOL_MASK) <
+@@ -37093,15 +37094,16 @@ QJS_STATIC LEPUSValue js_object_propertyIsEnumerable(LEPUSContext *ctx,
+                                                      LEPUSValueConst this_val,
+                                                      int argc,
+                                                      LEPUSValueConst *argv) {
+-  LEPUSValue obj, res = LEPUS_EXCEPTION;
+-  JSAtom prop = JS_ATOM_NULL;
++  LEPUSValue obj = LEPUS_UNDEFINED, res = LEPUS_EXCEPTION;
++  JSAtom prop;
+   LEPUSPropertyDescriptor desc;
+   int has_prop;
+ 
+-  obj = LEPUS_ToObject(ctx, this_val);
+-  if (LEPUS_IsException(obj)) goto exception;
+   prop = js_value_to_atom(ctx, argv[0]);
+   if (unlikely(prop == JS_ATOM_NULL)) goto exception;
++  obj = LEPUS_ToObject(ctx, this_val);
++  if (LEPUS_IsException(obj))
++      goto exception;
+ 
+   has_prop =
+       JS_GetOwnPropertyInternal(ctx, &desc, LEPUS_VALUE_GET_OBJ(obj), prop);
+-- 
+2.48.1
+
