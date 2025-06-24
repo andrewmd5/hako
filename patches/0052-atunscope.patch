@@ -1,0 +1,25 @@
+From b62e8c3d8c75a6c918f7db091f57e23604bafc38 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 24 Jun 2025 18:14:02 +0900
+Subject: [PATCH] added 'at' in Array.prototype[Symbol.unscopables]
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 0eda887..4a629e8 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -53171,6 +53171,8 @@ void LEPUS_AddIntrinsicBaseObjects(LEPUSContext *ctx) {
+   {
+     /* initialize Array.prototype[Symbol.unscopables] */
+     static const char unscopables[] =
++        "at" 
++        "\0"
+         "copyWithin"
+         "\0"
+         "entries"
+-- 
+2.48.1
+
