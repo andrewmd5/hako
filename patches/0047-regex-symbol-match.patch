@@ -1,0 +1,25 @@
+From dd070cea5192fa22aae4fadca33c48f7813f4ee4 Mon Sep 17 00:00:00 2001
+From: andrew <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 24 Jun 2025 17:09:55 +0900
+Subject: [PATCH] fixed Regexp.prototype[Symbol.match]
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 2ed0638..afa6860 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -43017,7 +43017,7 @@ QJS_STATIC LEPUSValue js_regexp_Symbol_match(LEPUSContext *ctx,
+       matchStr = JS_ToStringFree(ctx, JS_GetPropertyInt64(ctx, result, 0));
+       if (LEPUS_IsException(matchStr)) goto exception;
+       isEmpty = JS_IsEmptyString(matchStr);
+-      if (LEPUS_SetPropertyInt64(ctx, A, n++, matchStr) < 0) goto exception;
++      if (JS_DefinePropertyValueInt64(ctx, A, n++, matchStr, LEPUS_PROP_C_W_E | LEPUS_PROP_THROW) < 0) goto exception;
+       if (isEmpty) {
+         int64_t thisIndex, nextIndex;
+         if (JS_ToLengthFree(ctx, &thisIndex,
+-- 
+2.48.1
+
