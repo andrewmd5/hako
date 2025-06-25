@@ -133,6 +133,11 @@ export async function createHakoRuntime<TOptions, TResponse>(
   let wasmMemory: WebAssembly.Memory;
   if (memConfig.byom) {
     wasmMemory = memConfig.byom;
+    if (wasmMemory.buffer instanceof SharedArrayBuffer) {
+      throw new HakoError(
+        "Hako memory cannot be a SharedArrayBuffer. Use a regular ArrayBuffer instead."
+      );
+    }
   } else {
     // Convert bytes to pages (64KB per page)
     const initialPages = Math.ceil(initialMemory / 65536);

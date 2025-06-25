@@ -134,14 +134,7 @@ export class MemoryManager {
 
     let end = ptr;
     while (memory[end] !== 0) end++;
-
-    if (this.requiresBufferCopy) {
-      const length = end - ptr;
-      const copy = new Uint8Array(length);
-      copy.set(memory.subarray(ptr, end));
-      return this.decoder.decode(copy);
-    }
-
+    
     return this.decoder.decode(memory.subarray(ptr, end));
   }
 
