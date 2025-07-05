@@ -165,7 +165,7 @@ export class VMContext implements Disposable {
     if (this.opaqueDataPointer) {
       this.freeOpaqueData();
     }
-    this.opaqueDataPointer = this.container.memory.allocateString(opaque);
+    this.opaqueDataPointer = this.container.memory.allocateString(this.ctxPtr, opaque);
     this.container.exports.HAKO_SetContextData(
       this.pointer,
       this.opaqueDataPointer
@@ -197,7 +197,7 @@ export class VMContext implements Disposable {
    */
   freeOpaqueData(): void {
     if (this.opaqueDataPointer) {
-      this.container.memory.freeMemory(this.opaqueDataPointer);
+      this.container.memory.freeMemory(this.ctxPtr, this.opaqueDataPointer);
       this.opaqueDataPointer = undefined;
       this.container.exports.HAKO_SetContextData(this.pointer, 0);
     }
@@ -224,13 +224,13 @@ export class VMContext implements Disposable {
     if (code.length === 0) {
       return DisposableResult.success(this.undefined());
     }
-    const codemem = this.container.memory.internString(code);
+    const codemem = this.container.memory.writeNullTerminatedString(this.ctxPtr, code);
     let fileName = options.fileName || "file://eval";
     if (!fileName.startsWith("file://")) {
       fileName = `file://${fileName}`;
     }
 
-    const filenamePtr = this.container.memory.allocateString(fileName);
+    const filenamePtr = this.container.memory.allocateString(this.ctxPtr, fileName);
     const flags = evalOptionsToFlags(options);
     const detectModule = options.detectModule ?? false;
 
@@ -262,8 +262,8 @@ export class VMContext implements Disposable {
         new VMValue(this, resultPtr, ValueLifecycle.Owned)
       );
     } finally {
-      this.container.memory.freeMemory(codemem.pointer);
-      this.container.memory.freeMemory(filenamePtr);
+      this.container.memory.freeMemory(this.ctxPtr, codemem.pointer);
+      this.container.memory.freeMemory(this.ctxPtr, filenamePtr);
     }
   }
 
@@ -291,23 +291,23 @@ export class VMContext implements Disposable {
       return DisposableResult.success(new Uint8Array(0));
     }
 
-    const codemem = this.container.memory.internString(code);
+    const codemem = this.container.memory.writeNullTerminatedString(this.ctxPtr, code);
     let fileName = options.fileName || "eval";
     if (!fileName.startsWith("file://")) {
       fileName = `file://${fileName}`;
     }
 
-    const filenamePtr = this.container.memory.allocateString(fileName);
+    const filemem = this.container.memory.writeNullTerminatedString(this.ctxPtr, fileName);
     const flags = evalOptionsToFlags(options);
     const detectModule = options.detectModule ?? true; // Default to true for compilation
-    const bytecodeLength = this.container.memory.allocatePointerArray(1);
+    const bytecodeLength = this.container.memory.allocatePointerArray(this.ctxPtr, 1);
 
     try {
       const bytecodePtr = this.container.exports.HAKO_CompileToByteCode(
         this.ctxPtr,
         codemem.pointer,
         codemem.length,
-        filenamePtr,
+        filemem.pointer,
         detectModule ? 1 : 0,
         flags,
         bytecodeLength
@@ -330,9 +330,10 @@ export class VMContext implements Disposable {
         );
       }
 
-      
+
       const length = this.container.memory.readPointer(bytecodeLength);
       
+
       // Copy the bytecode from WASM memory to a Uint8Array
       const bytecode = this.container.memory.copy(
         bytecodePtr,
@@ -340,23 +341,23 @@ export class VMContext implements Disposable {
       );
 
       // Free the bytecode buffer allocated by the C function
-      this.container.memory.freeLepusMemory(this.ctxPtr, bytecodePtr);
+      this.container.memory.freeMemory(this.ctxPtr, bytecodePtr);
 
       return DisposableResult.success(bytecode);
     } finally {
-      this.container.memory.freeMemory(codemem.pointer);
-      this.container.memory.freeMemory(filenamePtr);
-      this.container.memory.freeMemory(bytecodeLength);
+      this.container.memory.freeMemory(this.ctxPtr, codemem.pointer);
+      this.container.memory.freeMemory(this.ctxPtr, filemem.pointer);
+      this.container.memory.freeMemory(this.ctxPtr, bytecodeLength);
     }
   }
 
- /**
-   * Evaluates precompiled JavaScript bytecode.
-   *
-   * @param bytecode - Bytecode buffer from compileToByteCode
-   * @param options - loadOnly: Only load bytecode without executing
-   * @returns Evaluation result or error
-   */
+  /**
+    * Evaluates precompiled JavaScript bytecode.
+    *
+    * @param bytecode - Bytecode buffer from compileToByteCode
+    * @param options - loadOnly: Only load bytecode without executing
+    * @returns Evaluation result or error
+    */
   evalByteCode(
     bytecode: Uint8Array,
     options: { loadOnly?: boolean } = {}
@@ -366,13 +367,13 @@ export class VMContext implements Disposable {
     }
 
     // Allocate memory for the bytecode in WASM
-    const bytecodePtr = this.container.memory.writeBytes(bytecode);
+    const bytecodePtr = this.container.memory.writeBytes(this.ctxPtr, bytecode);
 
     try {
       const resultPtr = this.container.exports.HAKO_EvalByteCode(
         this.ctxPtr,
         bytecodePtr,
-        bytecode.length,
+        bytecode.byteLength,
         options.loadOnly ? 1 : 0
       );
 
@@ -394,7 +395,7 @@ export class VMContext implements Disposable {
         new VMValue(this, resultPtr, ValueLifecycle.Owned)
       );
     } finally {
-      this.container.memory.freeMemory(bytecodePtr);
+      this.container.memory.freeMemory(this.ctxPtr, bytecodePtr);
     }
   }
 
@@ -443,19 +444,27 @@ export class VMContext implements Disposable {
     ...args: VMValue[]
   ): VMContextResult<VMValue> {
     return Scope.withScope((scope) => {
-      const thisPtr = thisArg
-        ? thisArg.getHandle()
-        : this.undefined().getHandle();
-
-      const argvPtr = this.container.memory.allocatePointerArray(args.length);
-      scope.add(() => this.container.memory.freeMemory(argvPtr));
-      for (let i = 0; i < args.length; i++) {
-        this.container.memory.writePointerToArray(
-          argvPtr,
-          i,
-          args[i].getHandle()
-        );
+      if (!thisArg) {
+        thisArg = scope.manage(this.undefined());
       }
+      const thisPtr = thisArg.getHandle();
+
+      let argvPtr: number = 0;
+
+
+      if (args.length > 0) {
+        argvPtr = this.container.memory.allocatePointerArray(this.ctxPtr, args.length);
+        scope.add(() => this.container.memory.freeMemory(this.ctxPtr, argvPtr));
+
+        for (let i = 0; i < args.length; i++) {
+          this.container.memory.writePointerToArray(
+            argvPtr,
+            i,
+            args[i].getHandle()
+          );
+        }
+      }
+
       const resultPtr = this.container.exports.HAKO_Call(
         this.pointer,
         func.getHandle(),
@@ -463,10 +472,12 @@ export class VMContext implements Disposable {
         args.length,
         argvPtr
       );
+
       const exceptionPtr = this.container.error.getLastErrorPointer(
         this.pointer,
         resultPtr
       );
+
       if (exceptionPtr !== 0) {
         this.container.memory.freeValuePointer(this.pointer, resultPtr);
         return DisposableResult.fail(
@@ -474,6 +485,7 @@ export class VMContext implements Disposable {
           (error) => this.unwrapResult(error)
         );
       }
+
       return DisposableResult.success(
         new VMValue(this, resultPtr, ValueLifecycle.Owned)
       );
@@ -501,7 +513,7 @@ export class VMContext implements Disposable {
     }
 
     using vmResolveResult = Scope.withScope((scope) => {
-      const global = this.getGlobalObject();
+      using global = this.getGlobalObject();
       const vmPromise = scope.manage(global.getProperty("Promise"));
       // biome-ignore lint/style/noNonNullAssertion: <explanation>
       const vmPromiseResolve = scope.manage(vmPromise?.getProperty("resolve"))!;
@@ -522,8 +534,8 @@ export class VMContext implements Disposable {
       if (result) {
         return Promise.resolve(this.success(result));
       }
-        // This shouldn't happen for fulfilled promises, but handle gracefully
-        return Promise.resolve(this.success(this.newValue(undefined)));
+      // This shouldn't happen for fulfilled promises, but handle gracefully
+      return Promise.resolve(this.success(this.newValue(undefined)));
     }
 
     if (state === "rejected") {
@@ -531,8 +543,8 @@ export class VMContext implements Disposable {
       if (error) {
         return Promise.resolve(this.fail(error));
       }
-        // This shouldn't happen for rejected promises, but handle gracefully
-        return Promise.resolve(this.fail(this.newValue(undefined)));
+      // This shouldn't happen for rejected promises, but handle gracefully
+      return Promise.resolve(this.fail(this.newValue(undefined)));
     }
 
     // Promise is pending, set up async handlers
@@ -591,11 +603,11 @@ export class VMContext implements Disposable {
       const lastError = isError
         ? pointer
         : this.container.error.getLastErrorPointer(
-            this.ctxPtr,
-            maybe_exception instanceof VMValue
-              ? maybe_exception.getHandle()
-              : maybe_exception
-          );
+          this.ctxPtr,
+          maybe_exception instanceof VMValue
+            ? maybe_exception.getHandle()
+            : maybe_exception
+        );
       if (lastError === 0) {
         return undefined;
       }
@@ -726,7 +738,11 @@ export class VMContext implements Disposable {
    * @returns The symbol value
    */
   getWellKnownSymbol(name: string): VMValue {
-    this._Symbol ??= this.getGlobalObject().getProperty("Symbol");
+    if (this._Symbol) {
+      return this._Symbol.getProperty(name);
+    }
+    using globalObject = this.getGlobalObject();
+    this._Symbol = globalObject.getProperty("Symbol");
     return this._Symbol.getProperty(name);
   }
 
@@ -873,8 +889,8 @@ export class VMContext implements Disposable {
     // Use a scoped block to manage temporary allocations
     const deferredPromise = Scope.withScope((scope) => {
       // Allocate memory for the resolve/reject pointers
-      const resolveFuncsPtr = this.container.memory.allocatePointerArray(2);
-      scope.add(() => this.container.memory.freeMemory(resolveFuncsPtr));
+      const resolveFuncsPtr = this.container.memory.allocatePointerArray(this.ctxPtr, 2);
+      scope.add(() => this.container.memory.freeMemory(this.ctxPtr, resolveFuncsPtr));
 
       // Create the promise capability by calling the native function
       const promisePtr = this.container.exports.HAKO_NewPromiseCapability(
@@ -963,9 +979,7 @@ export class VMContext implements Disposable {
    * @returns A borrowed VMValue
    */
   borrowValue(ptr: JSValuePointer): VMValue {
-    const duped = this.container.exports.HAKO_DupValuePointer(this.ctxPtr, ptr);
-    // Create a JSValue that borrows the pointer (doesn't own it)
-    return new VMValue(this, duped, ValueLifecycle.Borrowed);
+    return new VMValue(this, ptr, ValueLifecycle.Borrowed);
   }
 
   /**
@@ -1070,7 +1084,7 @@ export class VMContext implements Disposable {
    */
   release(): void {
     if (!this.isReleased) {
-      this.valueFactory.dipose();
+      this.valueFactory.dispose();
       this._Symbol?.dispose();
       this._SymbolAsyncIterator?.dispose();
       this._SymbolIterator?.dispose();

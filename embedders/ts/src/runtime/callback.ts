@@ -335,9 +335,9 @@ export class CallbackManager {
     }
 
     const id = this.registerHostFunction(callback);
-    const namePtr = this.memory.allocateString(name);
+    const namePtr = this.memory.allocateString(ctx, name);
     const funcPtr = this.exports.HAKO_NewFunction(ctx, id, namePtr);
-    this.memory.freeMemory(namePtr);
+    this.memory.freeMemory(ctx, namePtr);
     return funcPtr;
   }
 
@@ -544,7 +544,7 @@ export class CallbackManager {
       }
 
       // Allocate the source code string in WebAssembly memory
-      return this.memory.allocateString(moduleSource);
+      return this.memory.allocateString(_ctxPtr, moduleSource);
     }) as JSValuePointer;
   }
 
@@ -577,7 +577,7 @@ export class CallbackManager {
         return 0;
       }
       // Allocate the source code string in WebAssembly memory
-      return this.memory.allocateString(resolvedPath);
+      return this.memory.allocateString(_ctxPtr,resolvedPath);
   }
 
   /**
@@ -614,7 +614,7 @@ export class CallbackManager {
       );
 
       // Allocate the normalized name in WebAssembly memory
-      return this.memory.allocateString(normalizedName);
+      return this.memory.allocateString(_ctxPtr, normalizedName);
     }) as JSValuePointer;
   }
 

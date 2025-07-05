@@ -143,9 +143,9 @@ export class ErrorManager {
    * @param message - Error message for the ReferenceError
    */
   throwErrorMessage(ctx: JSContextPointer, message: string): void {
-    const msgPtr = this.memory.allocateString(message);
+    const msgPtr = this.memory.allocateString(ctx, message);
     this.exports.HAKO_RuntimeJSThrow(ctx, msgPtr);
-    this.memory.freeMemory(msgPtr);
+    this.memory.freeMemory(ctx, msgPtr);
   }
 
   /**

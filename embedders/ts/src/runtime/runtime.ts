@@ -118,7 +118,7 @@ export class HakoRuntime implements Disposable {
     // Calculate intrinsics flags based on options or use all intrinsics by default
     const intrinsics = options.intrinsics
       ? intrinsicsToFlags(options.intrinsics)
-      : Intrinsic.All;
+      : 0;
 
     // Create the native context
     const ctxPtr = this.container.exports.HAKO_NewContext(
@@ -281,7 +281,7 @@ export class HakoRuntime implements Disposable {
       this.rtPtr
     );
     const str = this.container.memory.readString(strPtr);
-    this.container.memory.freeMemory(strPtr);
+    this.container.memory.freeRuntimeMemory(this.pointer, strPtr);
     return str;
   }
 
@@ -472,14 +472,14 @@ export class HakoRuntime implements Disposable {
    */
   executePendingJobs(maxJobsToExecute = -1): ExecutePendingJobsResult {
     // Allocate memory for the context output parameter
-    const ctxPtrOut = this.container.memory.allocatePointerArray(1);
+    const ctxPtrOut = this.container.memory.allocateRuntimePointerArray(this.pointer, 1);
     const resultPtr = this.container.exports.HAKO_ExecutePendingJob(
       this.rtPtr,
       maxJobsToExecute,
       ctxPtrOut
     );
     const ctxPtr = this.container.memory.readPointerFromArray(ctxPtrOut, 0);
-    this.container.memory.freeMemory(ctxPtrOut);
+    this.container.memory.freeRuntimeMemory(this.pointer, ctxPtrOut);
 
     if (ctxPtr === 0) {
       // No context was created, no jobs were executed

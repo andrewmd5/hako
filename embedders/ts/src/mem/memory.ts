@@ -81,9 +81,24 @@ export class MemoryManager {
    * @returns Pointer to the allocated memory
    * @throws Error if memory allocation fails
    */
-  allocateMemory(size: number): number {
+  allocateMemory(ctx: JSContextPointer, size: number): number {
+    if (size <= 0) {
+      throw new Error("Size must be greater than 0");
+    }
     const exports = this.checkExports();
-    const ptr = exports.malloc(size);
+    const ptr = exports.HAKO_Malloc(ctx, size);
+    if (ptr === 0) {
+      throw new Error(`Failed to allocate ${size} bytes of memory`);
+    }
+    return ptr;
+  }
+
+  allocateRuntimeMemory(rt: JSRuntimePointer, size: number): number {
+    if (size <= 0) {
+      throw new Error("Size must be greater than 0");
+    }
+    const exports = this.checkExports();
+    const ptr = exports.HAKO_RuntimeMalloc(rt, size);
     if (ptr === 0) {
       throw new Error(`Failed to allocate ${size} bytes of memory`);
     }
@@ -95,21 +110,28 @@ export class MemoryManager {
    *
    * @param ptr - Pointer to the memory block to free
    */
-  freeMemory(ptr: number): void {
+  freeMemory(ctx: JSContextPointer, ptr: number): void {
     if (ptr !== 0) {
       const exports = this.checkExports();
-      exports.free(ptr);
+      exports.HAKO_Free(ctx, ptr);
     }
   }
 
-   /**
-    * Writes a Uint8Array to WebAssembly memory.
-    * @param bytes - Uint8Array to write to WebAssembly memory
-    * @returns Pointer to the allocated memory
-    */
-  writeBytes(bytes: Uint8Array): number {
+  freeRuntimeMemory(rt: JSRuntimePointer, ptr: number): void {
+    if (ptr !== 0) {
+      const exports = this.checkExports();
+      exports.HAKO_RuntimeFree(rt, ptr);
+    }
+  }
+
+  /**
+   * Writes a Uint8Array to WebAssembly memory.
+   * @param bytes - Uint8Array to write to WebAssembly memory
+   * @returns Pointer to the allocated memory
+   */
+  writeBytes(ctx: JSContextPointer, bytes: Uint8Array): number {
     const exports = this.checkExports();
-    const ptr = this.allocateMemory(bytes.byteLength);
+    const ptr = this.allocateMemory(ctx, bytes.byteLength);
 
     const memory = new Uint8Array(exports.memory.buffer);
     memory.set(bytes.subarray(0, bytes.byteLength), ptr);
@@ -125,10 +147,10 @@ export class MemoryManager {
    * @param str - JavaScript string to convert to a C string
    * @returns Pointer to the C string in WebAssembly memory
    */
-  allocateString(str: string): CString {
+  allocateString(ctx: JSContextPointer, str: string): CString {
     const exports = this.checkExports();
     const bytes = this.encoder.encode(str);
-    const ptr = this.allocateMemory(bytes.length + 1);
+    const ptr = this.allocateMemory(ctx, bytes.byteLength + 1);
     const memory = new Uint8Array(exports.memory.buffer);
     memory.set(bytes, ptr);
     memory[ptr + bytes.length] = 0; // Null terminator
@@ -147,17 +169,17 @@ export class MemoryManager {
     return memory.subarray(offset, offset + length);
   }
 
-  internString(str: string): {pointer: CString; length: number} {
+  writeNullTerminatedString(ctx: JSContextPointer, str: string): { pointer: CString; length: number } {
     const exports = this.checkExports();
     const bytes = this.encoder.encode(str);
-    const ptr = this.allocateMemory(bytes.length + 1);
+    const ptr = this.allocateMemory(ctx, bytes.byteLength + 1);
     const memory = new Uint8Array(exports.memory.buffer);
     memory.set(bytes, ptr);
     memory[ptr + bytes.length] = 0; // Null terminator
     return { pointer: ptr, length: bytes.length + 1 };
-   
+
   }
-  
+
 
   /**
    * Reads a null-terminated C string from the WebAssembly heap.
@@ -172,7 +194,7 @@ export class MemoryManager {
 
     let end = ptr;
     while (memory[end] !== 0) end++;
-    
+
     return this.decoder.decode(memory.subarray(ptr, end));
   }
 
@@ -221,18 +243,6 @@ export class MemoryManager {
     }
   }
 
-  /**
-   * Frees memory that was allocated by a lepus allocator function
-   *
-   * @param ctx - PrimJS context pointer
-   * @param ptr - Pointer to free
-   */
-  freeLepusMemory(ctx: JSContextPointer, ptr: number): void {
-    if (ptr !== 0) {
-      const exports = this.checkExports();
-      exports.HAKO_LEPUSFree(ctx, ptr);
-    }
-  }
 
   /**
    * Duplicates a JavaScript value pointer.
@@ -261,12 +271,17 @@ export class MemoryManager {
    */
   newArrayBuffer(ctx: JSContextPointer, data: Uint8Array): JSValuePointer {
     const exports = this.checkExports();
-    const bufPtr = this.allocateMemory(data.length);
+
+    if (data.byteLength === 0) {
+      return exports.HAKO_NewArrayBuffer(ctx, 0, 0);
+    }
+
+    const bufPtr = this.allocateMemory(ctx, data.byteLength);
     const memory = new Uint8Array(exports.memory.buffer);
     memory.set(data, bufPtr);
-    return exports.HAKO_NewArrayBuffer(ctx, bufPtr, data.length);
+    return exports.HAKO_NewArrayBuffer(ctx, bufPtr, data.byteLength);
   }
-  
+
 
   /**
    * Allocates memory for an array of pointers.
@@ -274,8 +289,12 @@ export class MemoryManager {
    * @param count - Number of pointers to allocate space for
    * @returns Pointer to the array in WebAssembly memory
    */
-  allocatePointerArray(count: number): number {
-    return this.allocateMemory(count * 4); // 4 bytes per pointer
+  allocatePointerArray(ctx: JSContextPointer, count: number): number {
+    return this.allocateMemory(ctx, count * 4); // 4 bytes per pointer
+  }
+
+  allocateRuntimePointerArray(rt: JSRuntimePointer, count: number): number {
+    return this.allocateRuntimeMemory(rt, count * 4); // 4 bytes per pointer
   }
 
   /**

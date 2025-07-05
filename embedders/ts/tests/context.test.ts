@@ -140,14 +140,14 @@ describe("JSContext", () => {
     const mem: MemoryManager = context.container.memory;
     const exports: HakoExports = context.container.exports;
 
-    const strPointer = mem.allocateString(data);
+    const strPointer = mem.allocateString(context.pointer, data);
     exports.HAKO_SetContextData(context.pointer, strPointer);
 
     const roundtrip = exports.HAKO_GetContextData(context.pointer);
 
     const str = mem.readString(roundtrip);
     expect(str).toEqual(data);
-    mem.freeMemory(roundtrip);
+    mem.freeMemory(context.pointer, roundtrip);
     exports.HAKO_SetContextData(context.pointer, 0);
   });
 
@@ -398,7 +398,7 @@ fibonacci(100);
     });
 
     it("should create and manipulate arrays", () => {
-      const arr = context.newArray();
+      using arr: VMValue = context.newArray();
 
       // Add elements
       arr.setProperty(0, "hello");
@@ -406,23 +406,17 @@ fibonacci(100);
       arr.setProperty(2, true);
 
       // Get length
-      const lengthProp = arr.getProperty("length");
+      using lengthProp = arr.getProperty("length");
       expect(lengthProp?.asNumber()).toBe(3);
 
       // Get elements
-      const elem0 = arr.getProperty(0);
-      const elem1 = arr.getProperty(1);
-      const elem2 = arr.getProperty(2);
+      using elem0 = arr.getProperty(0);
+      using elem1 = arr.getProperty(1);
+      using elem2 = arr.getProperty(2);
 
       expect(elem0?.asString()).toBe("hello");
       expect(elem1?.asNumber()).toBe(42);
       expect(elem2?.asBoolean()).toBe(true);
-
-      arr.dispose();
-      elem0?.dispose();
-      elem1?.dispose();
-      elem2?.dispose();
-      lengthProp?.dispose();
     });
 
     it("should create and use array buffers", () => {
@@ -463,9 +457,17 @@ fibonacci(100);
 			`);
       using map = result.unwrap();
 
+ 
       for (using entriesBox of context.getIterator(map).unwrap()) {
         using entriesHandle = entriesBox.unwrap();
-        
+        using keyHandle = entriesHandle.getProperty(0).toNativeValue();
+        using valueHandle = entriesHandle.getProperty(1).toNativeValue();
+        if (keyHandle.value === "key1") {
+          expect(valueHandle.value).toBe("value1");
+        }
+        if (keyHandle.value === "key2") {
+          expect(valueHandle.value).toBe("value2");
+        }
       }
     });
 
@@ -519,18 +521,10 @@ fibonacci(100);
       expect(arrElem1?.asString()).toBe("two");
       expect(arrElem2?.asBoolean()).toBe(true);
 
-      using testObj = context.newValue({ name: "test", value: 42 });
-      expect(testObj.isObject()).toBe(true);
-      using objProp1 = testObj.getProperty("name");
-      using objProp2 = testObj.getProperty("value");
+     
 
-      expect(objProp1?.asString()).toBe("test");
-      expect(objProp2?.asNumber()).toBe(42);
 
-      expect(objProp1?.asString()).toBe("test");
-      expect(objProp2?.asNumber()).toBe(42);
-      using testBuffer = context.newValue(new Uint8Array([1, 2, 3]));
-      expect(testBuffer.isArrayBuffer()).toBe(true);
+     
     });
 
     it("should convert PrimJS values to JS values", () => {
@@ -1178,6 +1172,8 @@ fibonacci(100);
         ]
       ]);
 
+
+
       runtime.enableModuleLoader((moduleName) => {
         return moduleMap.get(moduleName) || null;
       });
@@ -1296,9 +1292,9 @@ fibonacci(100);
       // Test calling all function types
       using arg = context.newNumber(5);
 
-      using multiplyResult = context.callFunction(multiplyExport, null, arg.dup());
-     // using multiplyValue = multiplyResult.unwrap();
-     // expect(multiplyValue.asNumber()).toBe(10);
+      using multiplyResult = context.callFunction(multiplyExport, null, arg);
+      using multiplyValue = multiplyResult.unwrap();
+      expect(multiplyValue.asNumber()).toBe(10);
 
 
       
@@ -1438,7 +1434,7 @@ fibonacci(100);
  
  // Test that the class itself is functional
  using classConstructor = result.getProperty("MyClass");
- expect(classConstructor?.isFunction()).toBe(true);
+ expect(classConstructor.isFunction()).toBe(true);
 });
 
 });

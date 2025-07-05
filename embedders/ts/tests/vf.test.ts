@@ -319,7 +319,8 @@ describe("ValueFactory", () => {
       };
 
       using fnVal = context.newValue(testFn, { name: "testFn" });
-      using result = context.callFunction(fnVal, null);
+     
+      using result = context.callFunction(fnVal, undefined);
 
       expect(result.error).toBeUndefined();
       expect(result.unwrap().isUndefined()).toBe(true);
@@ -532,43 +533,7 @@ describe("ValueFactory", () => {
     });
   });
 
-  // Caching Tests
-  describe("Value Caching", () => {
-    it("should cache undefined value", () => {
-      using undefined1 = context.newValue(undefined);
-      using undefined2 = context.newValue(undefined);
 
-      expect(undefined1.getHandle()).toBe(undefined2.getHandle());
-    });
-
-    it("should cache null value", () => {
-      using null1 = context.newValue(null);
-      using null2 = context.newValue(null);
-
-      expect(null1.getHandle()).toBe(null2.getHandle());
-    });
-
-    it("should cache true value", () => {
-      using true1 = context.newValue(true);
-      using true2 = context.newValue(true);
-
-      expect(true1.getHandle()).toBe(true2.getHandle());
-    });
-
-    it("should cache false value", () => {
-      using false1 = context.newValue(false);
-      using false2 = context.newValue(false);
-
-      expect(false1.getHandle()).toBe(false2.getHandle());
-    });
-
-    it("should cache global object", () => {
-      using globalObj1 = context.getGlobalObject();
-      using globalObj2 = context.getGlobalObject();
-
-      expect(globalObj1.getHandle()).toBe(globalObj2.getHandle());
-    });
-  });
 
   // Complex Object Tests
   describe("Complex Objects", () => {

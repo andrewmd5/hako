@@ -181,7 +181,7 @@ export class VMValue implements Disposable {
       const typeStr = this.context.container.memory.readString(typePtr);
       return typeStr as JSType;
     } finally {
-      this.context.container.memory.freeMemory(typePtr);
+      this.context.container.memory.freeMemory(this.context.pointer, typePtr);
     }
   }
 
@@ -247,6 +247,8 @@ export class VMValue implements Disposable {
    */
   isNull(): boolean {
     this.assertAlive();
+    // we need to free the null pointer after checking equality
+    // because the null pointer is a temporary value created by the engine
     return this.context.container.utils.isEqual(
       this.context.pointer,
       this.handle,
@@ -358,8 +360,8 @@ export class VMValue implements Disposable {
         return "Uint32Array";
       case 7:
         return "Int32Array";
-        case 8:
-         return "BigInt64Array";
+      case 8:
+        return "BigInt64Array";
       case 9:
         return "BigUint64Array";
       case 10:
@@ -512,13 +514,13 @@ export class VMValue implements Disposable {
       }
       let keyPtr: number;
       if (typeof key === "string") {
-        const keyStrPtr = this.context.container.memory.allocateString(key);
+        const keyStrPtr = this.context.container.memory.allocateString(this.context.pointer, key);
         keyPtr = this.context.container.exports.HAKO_NewString(
           this.context.pointer,
           keyStrPtr
         );
         scope.add(() => {
-          this.context.container.memory.freeMemory(keyStrPtr);
+          this.context.container.memory.freeMemory(this.context.pointer, keyStrPtr);
           this.context.container.memory.freeValuePointer(
             this.context.pointer,
             keyPtr
@@ -710,12 +712,12 @@ export class VMValue implements Disposable {
     let outPtrsBase: number | null = null;
     let outLen = 0;
 
-    const outPtrPtr = this.context.container.memory.allocatePointerArray(2);
-    const outLenPtr = this.context.container.memory.allocateMemory(4);
+    const outPtrPtr = this.context.container.memory.allocatePointerArray(this.context.pointer, 2);
+    const outLenPtr = this.context.container.memory.allocateMemory(this.context.pointer, 4);
 
     scope.add(() => {
-      this.context.container.memory.freeMemory(outPtrPtr);
-      this.context.container.memory.freeMemory(outLenPtr);
+      this.context.container.memory.freeMemory(this.context.pointer, outPtrPtr);
+      this.context.container.memory.freeMemory(this.context.pointer, outLenPtr);
     });
 
     this.context.container.memory.writeUint32(outLenPtr, 1000);
@@ -763,7 +765,7 @@ export class VMValue implements Disposable {
     }
 
     if (outPtrsBase !== null) {
-      this.context.container.memory.freeMemory(outPtrsBase);
+      this.context.container.memory.freeMemory(this.context.pointer, outPtrsBase);
     }
     scope.release();
   }
@@ -1024,9 +1026,9 @@ export class VMValue implements Disposable {
       throw new TypeError("Value is not a Uint8Array");
     }
     return Scope.withScope((scope) => {
-      const pointer = this.context.container.memory.allocatePointerArray(1);
+      const pointer = this.context.container.memory.allocatePointerArray(this.context.pointer, 1);
       scope.add(() => {
-        this.context.container.memory.freeMemory(pointer);
+        this.context.container.memory.freeMemory(this.context.pointer, pointer);
       });
 
       const bufPtr = this.context.container.exports.HAKO_CopyTypedArrayBuffer(
@@ -1046,7 +1048,7 @@ export class VMValue implements Disposable {
         0
       );
       scope.add(() => {
-        this.context.container.memory.freeMemory(bufPtr);
+        this.context.container.memory.freeMemory(this.context.pointer, bufPtr);
       });
       return new Uint8Array(this.context.container.exports.memory.buffer).slice(
         bufPtr,
@@ -1071,9 +1073,9 @@ export class VMValue implements Disposable {
       throw new TypeError("Value is not an ArrayBuffer");
     }
     return Scope.withScope((scope) => {
-      const pointer = this.context.container.memory.allocatePointerArray(1);
+      const pointer = this.context.container.memory.allocatePointerArray(this.context.pointer, 1);
       scope.add(() => {
-        this.context.container.memory.freeMemory(pointer);
+        this.context.container.memory.freeMemory(this.context.pointer, pointer);
       });
 
       const bufPtr = this.context.container.exports.HAKO_CopyArrayBuffer(
@@ -1088,17 +1090,26 @@ export class VMValue implements Disposable {
           throw error;
         }
       }
-      const length = this.context.container.memory.readPointerFromArray(
-        pointer,
-        0
-      );
+
+      const length = this.context.container.memory.readPointer(pointer);
+
+      if (length === 0) {
+        return new ArrayBuffer(0);
+      }
+
       scope.add(() => {
-        this.context.container.memory.freeMemory(bufPtr);
+        this.context.container.memory.freeMemory(this.context.pointer, bufPtr);
       });
-      const mem = new Uint8Array(
-        this.context.container.exports.memory.buffer
-      ).slice(bufPtr, bufPtr + length);
-      return mem.buffer;
+
+      // Get the memory slice from the WASM buffer
+      const mem = this.context.container.memory.slice(bufPtr, length);
+
+      // Create a new ArrayBuffer and copy the data
+      const result = new ArrayBuffer(length);
+      const resultView = new Uint8Array(result);
+      resultView.set(mem);
+
+      return result;
     });
   }
 
@@ -1110,18 +1121,15 @@ export class VMValue implements Disposable {
    */
   dispose(): void {
     if (!this.alive) return;
-    if (this.handle !== 0 && this.lifecycle === ValueLifecycle.Owned) {
-      this.context.container.memory.freeValuePointer(
-        this.context.pointer,
-        this.handle
-      );
+    if (this.lifecycle === ValueLifecycle.Borrowed) {
       this.handle = 0;
-    } else if (this.lifecycle === ValueLifecycle.Borrowed) {
-      this.context.container.memory.freeValuePointer(
-        this.context.pointer,
-        this.handle
-      );
+      return;
     }
+    this.context.container.memory.freeValuePointer(
+      this.context.pointer,
+      this.handle
+    );
+    this.handle = 0;
   }
 
   /**

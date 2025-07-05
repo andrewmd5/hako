@@ -1,9 +1,9 @@
 /**
- * Generated on: 2025-07-05 03:41:14
+ * Generated on: 2025-07-05 18:04:36
  * Source file: hako.h
- * Git commit: 6d4ea6f1b933493edf9349725341341ed21c7a5e
+ * Git commit: 995df96117b049fd17fdc1ad2c183fda18b771b4
  * Git branch: main
- * Git author: andrew <1297077+andrewmd5@users.noreply.github.com>
+ * Git author: Andrew Sampson <andrew@Andrews-Mac-Studio.local>
  * Git remote: https://github.com/andrewmd5/hako.git
  */
 
@@ -72,10 +72,10 @@ export interface HakoExports {
      * @param js_code JavaScript source code to compile
      * @param js_code_length Length of the source code in bytes
      * @param filename Filename for error reporting and debugging info
-     * @param detect_module Whether to auto-detect module code (.mjs extension or import/export statements)
+     * @param detect_module Whether to auto-detect module code (.mjs extension or
      * @param flags Compilation flags (LEPUS_EVAL_TYPE_MODULE, etc.)
      * @param out_bytecode_length Output parameter to receive bytecode buffer size
-     * @returns JSVoid* - Allocated bytecode buffer (caller must free), NULL on compilation error
+     * @returns JSVoid* - Allocated bytecode buffer (caller must free), NULL on
      */
     HAKO_CompileToByteCode(ctx: JSContextPointer, js_code: CString, js_code_length: number, filename: CString, detect_module: LEPUS_BOOL, flags: number, out_bytecode_length: number): number;
     /**
@@ -85,7 +85,7 @@ export interface HakoExports {
      * @param bytecode_buffer Bytecode buffer from HAKO_CompileToByteCode
      * @param bytecode_length Size of the bytecode buffer in bytes
      * @param load_only Whether to just load the bytecode without executing it
-     * @returns LEPUSValue* - Evaluation result: script return value, module namespace, or exception
+     * @returns LEPUSValue* - Evaluation result: script return value, module
      */
     HAKO_EvalByteCode(ctx: JSContextPointer, bytecode_buffer: number, bytecode_length: number, load_only: number): JSValuePointer;
 
@@ -145,14 +145,14 @@ export interface HakoExports {
      */
     HAKO_NewContext(rt: JSRuntimePointer, intrinsics: number): JSContextPointer;
     /**
-     * sets opaque data for the context. you are responsible for freeing the data.
+     * sets opaque data for the context. you are responsible for freeing the
      *
      * @param ctx Context to set the data for
      * @param data Pointer to the data
      */
     HAKO_SetContextData(ctx: JSContextPointer, data: number): void;
     /**
-     * If no_lepus_strict_mode is set to true, these conditions will handle, differently: if the object is null or undefined, read properties will return null if the object is null or undefined, write properties will not throw exception.
+     * If no_lepus_strict_mode is set to true, these conditions will handle,
      *
      * @param ctx Context to set to no strict mode
      */
@@ -188,7 +188,7 @@ export interface HakoExports {
      * Enables profiling of function calls
      *
      * @param rt Runtime to enable profiling for
-     * @param sampling Sampling rate - If sampling == 0, it's interpreted as "no sampling" which means we log 1/1 calls.
+     * @param sampling Sampling rate - If sampling == 0, it's interpreted as "no
      * @param opaque Opaque data to pass to the callback
      */
     HAKO_EnableProfileCalls(rt: JSRuntimePointer, sampling: number, opaque: number): void;
@@ -213,7 +213,7 @@ export interface HakoExports {
 
     // Error Handling
     /**
-     * Resolves the the last exception from a context, and returns its Error. Cannot be called twice.
+     * Resolves the the last exception from a context, and returns its Error.
      *
      * @param ctx Context to resolve in
      * @param maybe_exception Value that might be an exception
@@ -514,6 +514,13 @@ export interface HakoExports {
      */
     HAKO_DupValuePointer(ctx: JSContextPointer, val: JSValueConstPointer): JSValuePointer;
     /**
+     * Frees memory that was allocated by a lepus allocator function
+     *
+     * @param ctx Context that allocated the pointer
+     * @param ptr Pointer to free
+     */
+    HAKO_Free(ctx: JSContextPointer, ptr: number): void;
+    /**
      * Frees a C string managed by a context
      *
      * @param ctx Context that allocated the string
@@ -535,12 +542,28 @@ export interface HakoExports {
      */
     HAKO_FreeValuePointerRuntime(rt: JSRuntimePointer, value: JSValuePointer): void;
     /**
+     * Allocates memory using the context's allocator
+     *
+     * @param ctx Context to allocate memory in
+     * @param size Size of memory to allocate in bytes
+     * @returns void* - Pointer to the allocated memory
+     */
+    HAKO_Malloc(ctx: JSContextPointer, size: number): number;
+    /**
      * Frees memory that was allocated by a lepus allocator function
      *
-     * @param ctx Context that allocated the pointer
+     * @param rt Runtime that allocated the pointer
      * @param ptr Pointer to free
      */
-    HAKO_LEPUSFree(ctx: JSContextPointer, ptr: number): void;
+    HAKO_RuntimeFree(rt: JSRuntimePointer, ptr: number): void;
+    /**
+     * Allocates memory using the runtime allocator
+     *
+     * @param rt Runtime to allocate memory in
+     * @param size Size of memory to allocate in bytes
+     * @returns void* - Pointer to the allocated memory
+     */
+    HAKO_RuntimeMalloc(rt: JSRuntimePointer, size: number): number;
 
     // Value Operations
     /**
@@ -692,7 +715,7 @@ export interface HakoExports {
      * Checks if a value is an ArrayBuffer
      *
      * @param value Value to check
-     * @returns LEPUS_BOOL - True if value is an ArrayBuffer, false otherwise (-1 if error)
+     * @returns LEPUS_BOOL - True if value is an ArrayBuffer, false otherwise (-1 if
      */
     HAKO_IsArrayBuffer(value: JSValueConstPointer): LEPUS_BOOL;
     /**
@@ -727,7 +750,7 @@ export interface HakoExports {
      *
      * @param ctx Context to use
      * @param value Value to check
-     * @returns LEPUS_BOOL - True if value is a typed array, false otherwise (-1 if error)
+     * @returns LEPUS_BOOL - True if value is a typed array, false otherwise (-1 if
      */
     HAKO_IsTypedArray(ctx: JSContextPointer, value: JSValueConstPointer): LEPUS_BOOL;
     /**
