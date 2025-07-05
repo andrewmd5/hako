@@ -2,6 +2,7 @@ import type {
   ContextOptions,
   ExecutePendingJobsResult,
   JSVoid,
+  ModuleInitFunction,
   ModuleResolverFunction,
   ProfilerEventHandler,
   StripOptions,
@@ -89,6 +90,16 @@ export class HakoRuntime implements Disposable {
    */
   get pointer(): JSRuntimePointer {
     return this.rtPtr;
+  }
+
+  /**
+   * Sets the module initialization handler for this runtime.
+   * @param handler - The function to call when a module is initialized.
+   *                  This function receives a CModuleInitializer instance.
+   *                  If null, the module initialization handler is removed.
+   */
+  setModuleInitHandler(handler: ModuleInitFunction | null): void {
+    this.container.callbacks.setModuleInitHandler(handler);
   }
 
   /**

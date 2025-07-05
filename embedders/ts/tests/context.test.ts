@@ -354,6 +354,134 @@ fibonacci(100);
     });
   });
 
+  describe("C Module support", () => {
+    it("should create a C module with the builder API", () => {
+      let initWasCalled = false;
+      let capturedValue: string | null = null;
+
+      // Set up module initialization handler with the nice API
+      runtime.setModuleInitHandler((module) => {
+        console.log(`Init handler called for module: ${module.name}`);
+        initWasCalled = true;
+
+        // Set the export value easily
+        module.setExport("greeting", "hello from C module");
+
+        console.log(`Successfully initialized module: ${module.name}`);
+        return 0; // Success
+      });
+
+      // Bind a function to capture values
+      using global = context.getGlobalObject();
+      using captureFunc = context.newFunction("capture", (value) => {
+        capturedValue = value.asString();
+        console.log("Captured value:", capturedValue);
+        return context.undefined();
+      });
+      global.setProperty("capture", captureFunc);
+
+      // Create the C module using the builder
+      const moduleBuilder = context.createCModule("my-c-module")
+        .addExport("greeting");
+
+      console.log(`Created module: ${moduleBuilder.name}`);
+      console.log(`Module exports: ${moduleBuilder.exportNames.join(", ")}`);
+      expect(moduleBuilder.pointer).not.toBe(0);
+      expect(moduleBuilder.exportNames).toEqual(["greeting"]);
+      expect(initWasCalled).toBe(false);
+
+      // Set up module loader
+      runtime.enableModuleLoader((mn) => {
+        console.log(`Module loader called for: ${mn}`);
+        return null;
+      });
+
+      // Import the module and capture the value
+      using result = context.evalCode(`
+      import { greeting } from 'my-c-module';
+      export const test = greeting;
+      capture(greeting);
+    `, { type: "module" });
+
+      // Check that everything worked
+      expect(initWasCalled).toBe(true);
+      expect(capturedValue).toBe("hello from C module");
+
+      // Check the namespace
+      using namespace = result.unwrap();
+      using property = namespace.getProperty("test");
+      expect(property.asString()).toBe("hello from C module");
+
+      // Verify module name
+      expect(moduleBuilder.name).toBe("my-c-module");
+
+      console.log("Test completed successfully!");
+    });
+
+    it("should support multiple exports and functions", () => {
+      let initWasCalled = false;
+      const capturedValues: Record<string, unknown> = {};
+
+      runtime.setModuleInitHandler((module) => {
+        console.log(`Initializing module: ${module.name}`);
+        initWasCalled = true;
+
+        // Set multiple exports at once
+        module.setExports({
+          greeting: "Hello from C!",
+          version: "1.0.0",
+          count: 42,
+          isEnabled: true
+        });
+
+        // Set a function export
+        module.setFunction("add", (a, b) => {
+          return module.context.newNumber(a.asNumber() + b.asNumber());
+        });
+
+        return 0;
+      });
+
+      // Create capture function
+      using global = context.getGlobalObject();
+      using captureFunc = context.newFunction("captureAll", (...values) => {
+        values.forEach((value, index) => {
+          capturedValues[`value${index}`] = value.asString();
+        });
+        return context.undefined();
+      });
+      global.setProperty("captureAll", captureFunc);
+
+      // Create module with multiple exports
+      const moduleBuilder = context.createCModule("multi-export-module")
+        .addExports(["greeting", "version", "count", "isEnabled", "add"]);
+
+      expect(moduleBuilder.exportNames).toEqual(["greeting", "version", "count", "isEnabled", "add"]);
+
+      runtime.enableModuleLoader(() => null);
+
+      using result = context.evalCode(`
+      import { greeting, version, count, isEnabled, add } from 'multi-export-module';
+      
+      const sum = add(10, 20);
+      captureAll(greeting, version, count.toString(), isEnabled.toString(), sum.toString());
+      
+      export { greeting, version, count, isEnabled, sum };
+    `, { type: "module" });
+
+      expect(initWasCalled).toBe(true);
+      expect(capturedValues.value0).toBe("Hello from C!");
+      expect(capturedValues.value1).toBe("1.0.0");
+      expect(capturedValues.value2).toBe("42");
+      expect(capturedValues.value3).toBe("true");
+      expect(capturedValues.value4).toBe("30");
+
+      // Verify module properties
+      expect(moduleBuilder.name).toBe("multi-export-module");
+      expect(moduleBuilder.context).toBe(context);
+    });
+  });
+
   describe("Value creation", () => {
     it("should create primitive values", () => {
       // Undefined
@@ -457,7 +585,7 @@ fibonacci(100);
 			`);
       using map = result.unwrap();
 
- 
+
       for (using entriesBox of context.getIterator(map).unwrap()) {
         using entriesHandle = entriesBox.unwrap();
         using keyHandle = entriesHandle.getProperty(0).toNativeValue();
@@ -521,10 +649,10 @@ fibonacci(100);
       expect(arrElem1?.asString()).toBe("two");
       expect(arrElem2?.asBoolean()).toBe(true);
 
-     
 
 
-     
+
+
     });
 
     it("should convert PrimJS values to JS values", () => {
@@ -891,7 +1019,7 @@ fibonacci(100);
       using moduleNamespace = evalResult.unwrap();
 
 
-      
+
 
       // Check module exports
       using valueExport = moduleNamespace.getProperty("value");
@@ -1297,7 +1425,7 @@ fibonacci(100);
       expect(multiplyValue.asNumber()).toBe(10);
 
 
-      
+
     });
   });
 
@@ -1387,7 +1515,7 @@ fibonacci(100);
   });
 
   it("should handle class static initialization blocks", () => {
- const code = `
+    const code = `
    class MyClass {
      static value = 10;
      
@@ -1411,30 +1539,32 @@ fibonacci(100);
      getValue: MyClass.getValue()
    });
  `;
- 
- using compileResult = context.compileToByteCode(code, { 
-   type: "global",
-   fileName: "class-static-init-test.js"
- });
- const bytecode = compileResult.unwrap();
- 
- using evalResult = context.evalByteCode(bytecode);
- using result = evalResult.unwrap();
- 
- // Check that static initialization block executed
- using valueProp = result.getProperty("value");
- using computedValueProp = result.getProperty("computedValue");
- using initializedProp = result.getProperty("initialized");
- using getValueProp = result.getProperty("getValue");
- 
- expect(valueProp?.asNumber()).toBe(10);
- expect(computedValueProp?.asNumber()).toBe(20); // 10 * 2
- expect(initializedProp?.asBoolean()).toBe(true);
- expect(getValueProp?.asNumber()).toBe(20);
- 
- // Test that the class itself is functional
- using classConstructor = result.getProperty("MyClass");
- expect(classConstructor.isFunction()).toBe(true);
-});
+
+    using compileResult = context.compileToByteCode(code, {
+      type: "global",
+      fileName: "class-static-init-test.js"
+    });
+    const bytecode = compileResult.unwrap();
+
+    using evalResult = context.evalByteCode(bytecode);
+    using result = evalResult.unwrap();
+
+    // Check that static initialization block executed
+    using valueProp = result.getProperty("value");
+    using computedValueProp = result.getProperty("computedValue");
+    using initializedProp = result.getProperty("initialized");
+    using getValueProp = result.getProperty("getValue");
+
+    expect(valueProp?.asNumber()).toBe(10);
+    expect(computedValueProp?.asNumber()).toBe(20); // 10 * 2
+    expect(initializedProp?.asBoolean()).toBe(true);
+    expect(getValueProp?.asNumber()).toBe(20);
+
+    // Test that the class itself is functional
+    using classConstructor = result.getProperty("MyClass");
+    expect(classConstructor.isFunction()).toBe(true);
+  });
+
+
 
 });

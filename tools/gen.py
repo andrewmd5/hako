@@ -211,8 +211,10 @@ class TypeScriptInterfaceGenerator:
             "    JSValuePointer,",
             "    JSValueConstPointer,",
             "    CString,",
+            "    JSVoid,",
             "    OwnedHeapChar,",
-            "    LEPUS_BOOL",
+            "    LEPUS_BOOL,",
+            "    LEPUSModuleDef",
             "} from './types';",
             "",
             "/**",
@@ -221,8 +223,6 @@ class TypeScriptInterfaceGenerator:
             f"export interface {interface_name} {{",
             "    // Memory",
             "    memory: WebAssembly.Memory;",
-            "    malloc(size: number): number;",
-            "    free(ptr: number): void;",
             ""
         ])
 

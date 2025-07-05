@@ -24,8 +24,10 @@ import type {
   TraceEvent,
   JSVoid,
   ModuleResolverFunction,
+  ModuleInitFunction,
 } from "@hako/etc/types";
 import { VMValue } from "@hako/vm/value";
+import { CModuleInitializer } from "@hako/vm/cmodule";
 
 /**
  * Manages bidirectional callbacks between the host JavaScript environment and the PrimJS VM.
@@ -84,6 +86,12 @@ export class CallbackManager {
    * @private
    */
   private moduleResolver: ModuleResolverFunction | null = null;
+
+  /**
+  * Function for initializing C modules.
+  * @private
+  */
+  private moduleInitHandler: ModuleInitFunction | null = null;
 
   /**
    * Function for handling interrupts during long-running operations.
@@ -205,7 +213,7 @@ export class CallbackManager {
             currentModulePtr,
             _opaque
           );
-        },  
+        },
         profile_function_start: (
           ctxPtr: number,
           func_name: number,
@@ -219,6 +227,12 @@ export class CallbackManager {
           opaque: number
         ): void => {
           this.handleProfileFunctionEnd(ctxPtr, func_name, opaque);
+        },
+        module_init: (
+          ctxPtr: number,
+          modulePtr: number
+        ): number => {
+          return this.handleModuleInit(ctxPtr, modulePtr);
         },
       },
     };
@@ -406,6 +420,15 @@ export class CallbackManager {
   }
 
   /**
+  * Sets the module initialization handler for C modules.
+  *
+  * @param handler - The module initialization handler or null to disable
+  */
+  setModuleInitHandler(handler: ModuleInitFunction | null): void {
+    this.moduleInitHandler = handler;
+  }
+
+  /**
    * Handles a call from PrimJS to a host JavaScript function.
    *
    * This is called by the WebAssembly module when a host function
@@ -419,98 +442,98 @@ export class CallbackManager {
    * @returns Pointer to the result JSValue
    */
   handleHostFunctionCall(
-  ctxPtr: JSContextPointer,
-  thisPtr: JSValuePointer,
-  argc: number,
-  argvPtr: number,
-  funcId: number
-): number {
-  const callback = this.hostFunctions.get(funcId);
-  if (!callback) {
-    console.error(`No callback registered for function ID ${funcId}`);
-    return this.exports.HAKO_GetUndefined();
-  }
-  
-  // Get the context object
-  const ctx = this.getContext(ctxPtr);
-  if (!ctx) {
-    console.error(`No context registered for pointer ${ctxPtr}`);
-    return this.exports.HAKO_GetUndefined();
-  }
-
-  return Scope.withScopeMaybeAsync(this, function* (awaited, scope) {
-    // Create handles for 'this' and arguments
-    const thisHandle = scope.manage(ctx.borrowValue(thisPtr));
-    const argHandles = new Array<VMValue>(argc);
-    
-    for (let i = 0; i < argc; i++) {
-      const argPtr = this.exports.HAKO_ArgvGetJSValueConstPointer(argvPtr, i);
-      const arg = ctx.duplicateValue(argPtr);
-      argHandles[i] = scope.manage(arg);
-    }
-
-    try {
-      // Call the callback function and handle its result
-      const result = yield* awaited(callback.apply(thisHandle, argHandles));
-      
-      if (result) {
-        if (result instanceof VMValue) {
-          // Duplicate the result handle and dispose the original
-          const duplicatedHandle = this.exports.HAKO_DupValuePointer(
-            ctxPtr,
-            result.getHandle()
-          );
-          result.dispose(); // Dispose the original result
-          return duplicatedHandle;
-        }
-        
-        if (DisposableResult.is(result)) {
-          if (result.error) {
-            console.error("Error in callback:", result.error);
-            // Dispose the result and handle error
-            result.dispose();
-            try {
-              result.unwrap(); // This will throw
-            } catch (e) {
-              // Convert the error to a PrimJS exception and return it
-              using errorHandle = ctx.newValue(e as Error);
-              return this.exports.HAKO_Throw(ctxPtr, errorHandle.getHandle());
-            }
-            return this.exports.HAKO_GetUndefined();
-          }
-          
-          // Unwrap the result and dispose the wrapper
-          const unwrapped = result.unwrap();
-          result.dispose(); // Dispose the DisposableResult wrapper
-          
-          const duplicatedHandle = this.exports.HAKO_DupValuePointer(
-            ctxPtr,
-            unwrapped.getHandle()
-          );
-          unwrapped.dispose(); // Dispose the unwrapped value
-          return duplicatedHandle;
-        }
-        
-        // This should never happen based on your comment, but handle gracefully
-        console.warn("Unexpected result type in handleHostFunctionCall:", typeof result);
-        return this.exports.HAKO_GetUndefined();
-      }
-      
+    ctxPtr: JSContextPointer,
+    thisPtr: JSValuePointer,
+    argc: number,
+    argvPtr: number,
+    funcId: number
+  ): number {
+    const callback = this.hostFunctions.get(funcId);
+    if (!callback) {
+      console.error(`No callback registered for function ID ${funcId}`);
       return this.exports.HAKO_GetUndefined();
-      
-    } catch (error) {
-      // FIXED: Use 'using' for proper disposal of error handle
-      try {
-        using errorHandle = ctx.newValue(error as Error);
-        return this.exports.HAKO_Throw(ctxPtr, errorHandle.getHandle());
-      } catch (conversionError) {
-        // If we can't convert the error, log it and return undefined
-        console.error("Failed to convert error to PrimJS:", conversionError);
-        return this.exports.HAKO_GetUndefined();
-      }
     }
-  }) as number;
-}
+
+    // Get the context object
+    const ctx = this.getContext(ctxPtr);
+    if (!ctx) {
+      console.error(`No context registered for pointer ${ctxPtr}`);
+      return this.exports.HAKO_GetUndefined();
+    }
+
+    return Scope.withScopeMaybeAsync(this, function* (awaited, scope) {
+      // Create handles for 'this' and arguments
+      const thisHandle = scope.manage(ctx.borrowValue(thisPtr));
+      const argHandles = new Array<VMValue>(argc);
+
+      for (let i = 0; i < argc; i++) {
+        const argPtr = this.exports.HAKO_ArgvGetJSValueConstPointer(argvPtr, i);
+        const arg = ctx.duplicateValue(argPtr);
+        argHandles[i] = scope.manage(arg);
+      }
+
+      try {
+        // Call the callback function and handle its result
+        const result = yield* awaited(callback.apply(thisHandle, argHandles));
+
+        if (result) {
+          if (result instanceof VMValue) {
+            // Duplicate the result handle and dispose the original
+            const duplicatedHandle = this.exports.HAKO_DupValuePointer(
+              ctxPtr,
+              result.getHandle()
+            );
+            result.dispose(); // Dispose the original result
+            return duplicatedHandle;
+          }
+
+          if (DisposableResult.is(result)) {
+            if (result.error) {
+              console.error("Error in callback:", result.error);
+              // Dispose the result and handle error
+              result.dispose();
+              try {
+                result.unwrap(); // This will throw
+              } catch (e) {
+                // Convert the error to a PrimJS exception and return it
+                using errorHandle = ctx.newValue(e as Error);
+                return this.exports.HAKO_Throw(ctxPtr, errorHandle.getHandle());
+              }
+              return this.exports.HAKO_GetUndefined();
+            }
+
+            // Unwrap the result and dispose the wrapper
+            const unwrapped = result.unwrap();
+            result.dispose(); // Dispose the DisposableResult wrapper
+
+            const duplicatedHandle = this.exports.HAKO_DupValuePointer(
+              ctxPtr,
+              unwrapped.getHandle()
+            );
+            unwrapped.dispose(); // Dispose the unwrapped value
+            return duplicatedHandle;
+          }
+
+          // This should never happen based on your comment, but handle gracefully
+          console.warn("Unexpected result type in handleHostFunctionCall:", typeof result);
+          return this.exports.HAKO_GetUndefined();
+        }
+
+        return this.exports.HAKO_GetUndefined();
+
+      } catch (error) {
+        // FIXED: Use 'using' for proper disposal of error handle
+        try {
+          using errorHandle = ctx.newValue(error as Error);
+          return this.exports.HAKO_Throw(ctxPtr, errorHandle.getHandle());
+        } catch (conversionError) {
+          // If we can't convert the error, log it and return undefined
+          console.error("Failed to convert error to PrimJS:", conversionError);
+          return this.exports.HAKO_GetUndefined();
+        }
+      }
+    }) as number;
+  }
 
   /**
    * Handles a module load request from PrimJS.
@@ -555,29 +578,29 @@ export class CallbackManager {
     currentModulePtr: number,
     _opaque: JSVoid
   ): number {
-     if (!this.moduleResolver) {
-        console.error("No module resolver registered");
-        return 0;
-      }
+    if (!this.moduleResolver) {
+      console.error("No module resolver registered");
+      return 0;
+    }
 
-      if (moduleNamePtr === 0) {
-        return 0; // Invalid module name pointer
-      }
+    if (moduleNamePtr === 0) {
+      return 0; // Invalid module name pointer
+    }
 
-      // Read the module name and call the module loader
-      const moduleName = this.memory.readString(moduleNamePtr);
-      let currentModuleName;
-      if (currentModulePtr !== 0) {
-        currentModuleName = this.memory.readString(currentModulePtr);
-      }
+    // Read the module name and call the module loader
+    const moduleName = this.memory.readString(moduleNamePtr);
+    let currentModuleName;
+    if (currentModulePtr !== 0) {
+      currentModuleName = this.memory.readString(currentModulePtr);
+    }
 
-      const resolvedPath = this.moduleResolver(moduleName, currentModuleName);
-      if (!resolvedPath) {
-        console.error(`Module ${moduleName} not found`);
-        return 0;
-      }
-      // Allocate the source code string in WebAssembly memory
-      return this.memory.allocateString(_ctxPtr,resolvedPath);
+    const resolvedPath = this.moduleResolver(moduleName, currentModuleName);
+    if (!resolvedPath) {
+      console.error(`Module ${moduleName} not found`);
+      return 0;
+    }
+    // Allocate the source code string in WebAssembly memory
+    return this.memory.allocateString(_ctxPtr, resolvedPath);
   }
 
   /**
@@ -713,6 +736,41 @@ export class CallbackManager {
       this.profilerHandler.onFunctionEnd(ctx, event, opaque);
     } catch (error) {
       console.error("Error in profile function end handler:", error);
+    }
+  }
+
+  /**
+  * Handles a C module initialization request from PrimJS.
+  *
+  * This is called by the WebAssembly module when a C module needs
+  * to be initialized.
+  *
+  * @param ctxPtr - The PrimJS context pointer
+  * @param modulePtr - Pointer to the module definition
+  * @returns 0 on success, -1 on failure
+  */
+  handleModuleInit(
+    ctxPtr: JSContextPointer,
+    modulePtr: number
+  ): number {
+    if (!this.moduleInitHandler) {
+      console.error("No module init handler registered");
+      return -1;
+    }
+
+    // Get the context object
+    const ctx = this.getContext(ctxPtr);
+    if (!ctx) {
+      console.error(`No context registered for pointer ${ctxPtr}`);
+      return -1;
+    }
+
+    try {
+      // Call the module init handler
+      return this.moduleInitHandler(new CModuleInitializer(ctx, modulePtr));
+    } catch (error) {
+      console.error("Error in module init handler:", error);
+      return -1;
     }
   }
 }

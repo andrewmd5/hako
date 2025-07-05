@@ -71,6 +71,9 @@ __attribute__((import_module("hako"),
                import_name("profile_function_end"))) extern void
 host_profile_function_end(LEPUSContext* ctx, CString* event, JSVoid* opaque);
 
+__attribute__((import_module("hako"), import_name("module_init"))) extern int
+host_module_init(LEPUSContext* ctx, LEPUSModuleDef* m);
+
 static HakoBuildInfo build_info = {.version = HAKO_VERSION,
                                    .flags = HAKO_BUILD_FLAGS_VALUE,
                                    .build_date = __DATE__ " " __TIME__,
@@ -1644,4 +1647,43 @@ LEPUSValue* WASM_EXPORT(HAKO_EvalByteCode)(LEPUSContext* ctx,
       ctx, (const uint8_t*)bytecode_buffer, bytecode_length, flags);
 
   return jsvalue_to_heap(ctx, eval_result);
+}
+
+static int hako_module_init_wrapper(LEPUSContext* ctx, LEPUSModuleDef* m) {
+  return host_module_init(ctx, m);
+}
+
+LEPUSModuleDef* WASM_EXPORT(HAKO_NewCModule)(LEPUSContext* ctx,
+                                             CString* name_str) {
+  return LEPUS_NewCModule(ctx, name_str, hako_module_init_wrapper);
+}
+
+int WASM_EXPORT(HAKO_AddModuleExport)(LEPUSContext* ctx,
+                                      LEPUSModuleDef* m,
+                                      CString* export_name) {
+  return LEPUS_AddModuleExport(ctx, m, export_name);
+}
+
+int WASM_EXPORT(HAKO_SetModuleExport)(LEPUSContext* ctx,
+                                      LEPUSModuleDef* m,
+                                      CString* export_name,
+                                      LEPUSValueConst* val) {
+  return LEPUS_SetModuleExport(ctx, m, export_name, LEPUS_DupValue(ctx, *val));
+}
+
+CString* WASM_EXPORT(HAKO_GetModuleName)(LEPUSContext* ctx,
+                                      LEPUSModuleDef* m) {
+  if (!m) {
+    return NULL;
+  }
+  LEPUSAtom module_name_atom = LEPUS_GetModuleName(ctx, m);
+  if (LEPUS_IsAtomNull(module_name_atom)) {
+    return NULL;
+  }
+  const char* atom_str = LEPUS_AtomToCString(ctx, module_name_atom);
+  if (!atom_str) {
+    return NULL;
+  }
+
+  return atom_str;
 }

@@ -1,8 +1,8 @@
 /**
- * Generated on: 2025-07-05 18:04:36
+ * Generated on: 2025-07-06 00:00:16
  * Source file: hako.h
- * Git commit: 995df96117b049fd17fdc1ad2c183fda18b771b4
- * Git branch: main
+ * Git commit: 614d6c22040ed5b0244aa9e46ed8aab3167edcdd
+ * Git branch: vnext
  * Git author: Andrew Sampson <andrew@Andrews-Mac-Studio.local>
  * Git remote: https://github.com/andrewmd5/hako.git
  */
@@ -17,8 +17,10 @@ import type {
     JSValuePointer,
     JSValueConstPointer,
     CString,
+    JSVoid,
     OwnedHeapChar,
-    LEPUS_BOOL
+    LEPUS_BOOL,
+    LEPUSModuleDef
 } from './types';
 
 /**
@@ -27,8 +29,6 @@ import type {
 export interface HakoExports {
     // Memory
     memory: WebAssembly.Memory;
-    malloc(size: number): number;
-    free(ptr: number): void;
 
     /**
      * Computes memory usage statistics for the runtime
@@ -295,6 +295,43 @@ export interface HakoExports {
      * @param threshold Threshold in bytes
      */
     HAKO_SetGCThreshold(ctx: JSContextPointer, threshold: number): void;
+
+    // Module Creation
+    /**
+     * Adds an export to a C module
+     *
+     * @param ctx Context to use
+     * @param m Module to add export to
+     * @param export_name Name of the export
+     * @returns int - 0 on success, -1 on failure
+     */
+    HAKO_AddModuleExport(ctx: JSContextPointer, m: LEPUSModuleDef, export_name: CString): number;
+    /**
+     * Gets the name of a module
+     *
+     * @param ctx Context to use
+     * @param m Module to get name from
+     * @returns CString* - Module name string
+     */
+    HAKO_GetModuleName(ctx: JSContextPointer, m: LEPUSModuleDef): CString;
+    /**
+     * Creates a new C module
+     *
+     * @param ctx Context to create module in
+     * @param name_str Module name
+     * @returns LEPUSModuleDef* - New module definition
+     */
+    HAKO_NewCModule(ctx: JSContextPointer, name_str: CString): number;
+    /**
+     * Sets the value of a module export
+     *
+     * @param ctx Context to use
+     * @param m Module to set export on
+     * @param export_name Name of the export
+     * @param val Value to set
+     * @returns int - 0 on success, -1 on failure
+     */
+    HAKO_SetModuleExport(ctx: JSContextPointer, m: LEPUSModuleDef, export_name: CString, val: JSValueConstPointer): number;
 
     // Module Loading
     /**

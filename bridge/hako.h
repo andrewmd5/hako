@@ -11,6 +11,8 @@ extern "C" {
 #include "build.h"
 #include "quickjs.h"
 
+typedef int LEPUSModuleInitFunc(LEPUSContext* ctx, LEPUSModuleDef* m);
+
 #define BorrowedHeapChar const char
 #define OwnedHeapChar char
 #define JSBorrowedChar const char
@@ -1318,6 +1320,68 @@ LEPUSValue* HAKO_EvalByteCode(LEPUSContext* ctx,
                               JSVoid* bytecode_buffer,
                               size_t bytecode_length,
                               LEPUS_BOOL load_only);
+
+/**
+ * @brief Creates a new C module
+ * @category Module Creation
+ *
+ * @param ctx Context to create module in
+ * @param name_str Module name
+ * @return LEPUSModuleDef* - New module definition
+ * @tsparam ctx JSContextPointer
+ * @tsparam name_str CString
+ * @tsreturn number
+ */
+LEPUSModuleDef* HAKO_NewCModule(LEPUSContext* ctx, CString* name_str);
+
+/**
+ * @brief Adds an export to a C module
+ * @category Module Creation
+ *
+ * @param ctx Context to use
+ * @param m Module to add export to
+ * @param export_name Name of the export
+ * @return int - 0 on success, -1 on failure
+ * @tsparam ctx JSContextPointer
+ * @tsparam m LEPUSModuleDef
+ * @tsparam export_name CString
+ * @tsreturn number
+ */
+int HAKO_AddModuleExport(LEPUSContext* ctx,
+                         LEPUSModuleDef* m,
+                         CString* export_name);
+
+/**
+ * @brief Sets the value of a module export
+ * @category Module Creation
+ *
+ * @param ctx Context to use
+ * @param m Module to set export on
+ * @param export_name Name of the export
+ * @param val Value to set
+ * @return int - 0 on success, -1 on failure
+ * @tsparam ctx JSContextPointer
+ * @tsparam m LEPUSModuleDef
+ * @tsparam export_name CString
+ * @tsparam val JSValueConstPointer
+ * @tsreturn number
+ */
+int HAKO_SetModuleExport(LEPUSContext* ctx,
+                         LEPUSModuleDef* m,
+                         CString* export_name,
+                         LEPUSValueConst* val);
+/**
+ * @brief Gets the name of a module
+ * @category Module Creation
+ * 
+ * @param ctx Context to use
+ * @param m Module to get name from
+ * @return CString* - Module name string
+ * @tsparam ctx JSContextPointer
+ * @tsparam m LEPUSModuleDef
+ * @tsreturn CString
+ */
+CString* HAKO_GetModuleName(LEPUSContext* ctx, LEPUSModuleDef* m);
 
 #ifdef HAKO_DEBUG_MODE
 #define HAKO_LOG(msg) hako_log(msg)

@@ -1,0 +1,58 @@
+From c6f1dcccaa20580f4171f993a984f40d975c7791 Mon Sep 17 00:00:00 2001
+From: Andrew Sampson <andrew@Andrews-Mac-Studio.local>
+Date: Sun, 6 Jul 2025 00:36:59 +0900
+Subject: [PATCH] fix: warnings
+
+---
+ src/interpreter/quickjs/include/quickjs.h | 5 +++--
+ src/interpreter/quickjs/source/quickjs.cc | 4 ++++
+ 2 files changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/src/interpreter/quickjs/include/quickjs.h b/src/interpreter/quickjs/include/quickjs.h
+index a33c915..3f2c53b 100644
+--- a/src/interpreter/quickjs/include/quickjs.h
++++ b/src/interpreter/quickjs/include/quickjs.h
+@@ -1334,6 +1334,7 @@ LEPUSAtom LEPUS_GetScriptOrModuleName(LEPUSContext *ctx, int n_stack_levels);
+ LEPUSAtom LEPUS_GetModuleName(LEPUSContext *ctx, LEPUSModuleDef *m);
+ LEPUSValue LEPUS_GetImportMeta(LEPUSContext *ctx, LEPUSModuleDef *m);
+ void LEPUS_FreeModuleDef(LEPUSContext *ctx, LEPUSModuleDef *m);
++LEPUS_BOOL LEPUS_IsAtomNull(LEPUSAtom atom);
+ 
+ #define LEPUS_EVAL_BINARY_LOAD_ONLY (1 << 0) /* only load the module */
+ LEPUSValue LEPUS_EvalBinary(LEPUSContext *ctx, const uint8_t *buf,
+@@ -1650,7 +1651,7 @@ void LEPUS_RegisterNgType(LEPUSRuntime *, int32_t *, uint32_t size);
+ when an object of type lepus::RefCounted is destructed,
+    call this function to free all MapRecords
+ */
+-void LEPUS_FreeRefCountedWeakRef(LEPUSRuntime *, struct JSMapRecord *);
++void LEPUS_FreeRefCountedWeakRef(LEPUSRuntime *, struct JSMapRecord *first_mr);
+ 
+ LEPUS_BOOL LEPUS_IsPrimjsEnabled(LEPUSRuntime *rt);
+ 
+@@ -1669,7 +1670,7 @@ LEPUSValue LEPUS_NewArrayWithArgs(LEPUSContext *, int32_t, LEPUSValue *);
+   If input is an ASCII string, return pointer to string, otherwise
+   return nullptr;
+ */
+-const char *LEPUS_GetStringUtf8(LEPUSContext *, const struct JSString *);
++const char *LEPUS_GetStringUtf8(LEPUSContext *, const struct JSString *p);
+ void LEPUS_SetFuncFileName(LEPUSContext *, LEPUSValue, const char *);
+ 
+ void InitLynxTraceEnv(void *(*)(const char *), void (*)(void *));
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index fb400f4..85cb484 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -33988,6 +33988,10 @@ void LEPUS_FreeModuleDef(LEPUSContext *ctx, LEPUSModuleDef *m)
+   js_free_module_def(ctx, m);
+ }
+ 
++LEPUS_BOOL LEPUS_IsAtomNull(LEPUSAtom atom) {
++  return atom == JS_ATOM_NULL;
++}
++
+ LEPUSValue LEPUS_EvalBinary(LEPUSContext *ctx, const uint8_t *buf,
+                             size_t buf_len, int flags) {
+     CallGCFunc(JS_EvalBinary_GC, ctx, buf, buf_len, flags);
+-- 
+2.45.2
+

@@ -4,6 +4,7 @@ import type { VMValue } from "@hako/vm/value";
 import { PrimJSError } from "@hako/etc/errors";
 import type { DisposableResult } from "@hako/mem/lifetime";
 import type { VmCallResult } from "@hako/vm/vm-interface";
+import type { CModuleInitializer } from "@hako/vm/cmodule";
 
 /**
  * Opaque type helper that wraps a basic type with a specific string tag
@@ -95,6 +96,9 @@ export const LEPUS_FALSE: LEPUS_BOOL = 0;
  */
 export const LEPUS_TRUE: LEPUS_BOOL = 1;
 
+
+export type LEPUSModuleDef = number;
+
 /**
  * Converts a LEPUS_BOOL value to a JavaScript boolean.
  *
@@ -165,6 +169,18 @@ export type ModuleResolverFunction = (
   moduleName: string,
   currentModule?: string
 ) => string | undefined;
+
+
+/**
+ * Function used to initialize a C module.
+ * This is called when the module is loaded into the runtime.
+ *
+ * @param module - The CModuleInitializer instance representing the module
+ * @returns A status code indicating success (0) or failure (non-zero)
+ */
+export type ModuleInitFunction = (
+  module: CModuleInitializer,
+) => number;
 
 /**
  * Basic interrupt handler function signature for C callbacks.
@@ -611,7 +627,7 @@ export type PromiseState =
   | "fulfilled"
   /** Promise has been rejected with a reason */
   | "rejected";
-  
+
 //=============================================================================
 // Equality Operations
 //=============================================================================
