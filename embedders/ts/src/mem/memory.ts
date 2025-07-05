@@ -102,6 +102,20 @@ export class MemoryManager {
     }
   }
 
+   /**
+    * Writes a Uint8Array to WebAssembly memory.
+    * @param bytes - Uint8Array to write to WebAssembly memory
+    * @returns Pointer to the allocated memory
+    */
+  writeBytes(bytes: Uint8Array): number {
+    const exports = this.checkExports();
+    const ptr = this.allocateMemory(bytes.byteLength);
+
+    const memory = new Uint8Array(exports.memory.buffer);
+    memory.set(bytes.subarray(0, bytes.byteLength), ptr);
+    return ptr;
+  }
+
   /**
    * Creates a null-terminated C string in the WebAssembly heap.
    *
@@ -120,6 +134,30 @@ export class MemoryManager {
     memory[ptr + bytes.length] = 0; // Null terminator
     return ptr;
   }
+
+  copy(offset: number, length: number): Uint8Array {
+    const exports = this.checkExports();
+    const memory = new Uint8Array(exports.memory.buffer);
+    return memory.slice(offset, offset + length);
+  }
+
+  slice(offset: number, length: number): Uint8Array {
+    const exports = this.checkExports();
+    const memory = new Uint8Array(exports.memory.buffer);
+    return memory.subarray(offset, offset + length);
+  }
+
+  internString(str: string): {pointer: CString; length: number} {
+    const exports = this.checkExports();
+    const bytes = this.encoder.encode(str);
+    const ptr = this.allocateMemory(bytes.length + 1);
+    const memory = new Uint8Array(exports.memory.buffer);
+    memory.set(bytes, ptr);
+    memory[ptr + bytes.length] = 0; // Null terminator
+    return { pointer: ptr, length: bytes.length + 1 };
+   
+  }
+  
 
   /**
    * Reads a null-terminated C string from the WebAssembly heap.
@@ -184,15 +222,15 @@ export class MemoryManager {
   }
 
   /**
-   * Frees a void pointer allocated by PrimJS.
+   * Frees memory that was allocated by a lepus allocator function
    *
    * @param ctx - PrimJS context pointer
    * @param ptr - Pointer to free
    */
-  freeVoidPointer(ctx: JSContextPointer, ptr: number): void {
+  freeLepusMemory(ctx: JSContextPointer, ptr: number): void {
     if (ptr !== 0) {
       const exports = this.checkExports();
-      exports.HAKO_FreeVoidPointer(ctx, ptr);
+      exports.HAKO_LEPUSFree(ctx, ptr);
     }
   }
 
@@ -228,6 +266,7 @@ export class MemoryManager {
     memory.set(data, bufPtr);
     return exports.HAKO_NewArrayBuffer(ctx, bufPtr, data.length);
   }
+  
 
   /**
    * Allocates memory for an array of pointers.

@@ -153,6 +153,19 @@ export type ModuleNormalizerFunction = (
   moduleName: string
 ) => string | Promise<string>;
 
+
+/**
+ * Function used to resolve module names (import.meta.resolve).
+ * 
+ * @param moduleName - The module name to resolve
+ * @param currentModule - The current module context 
+ * @returns The fully qualified path to the module, or undefined if not found
+ */
+export type ModuleResolverFunction = (
+  moduleName: string,
+  currentModule?: string
+) => string | undefined;
+
 /**
  * Basic interrupt handler function signature for C callbacks.
  * This is the low-level function called by the C side.
@@ -566,6 +579,12 @@ export function evalOptionsToFlags(
 
   if (evalOptions === undefined) {
     return EvalFlag.Global;
+  }
+
+  if (evalOptions.type !== undefined && evalOptions.type !== "global" && evalOptions.type !== "module") {
+    throw new PrimJSError(
+      `Invalid eval type: ${evalOptions.type}. Must be "global" or "module".`
+    );
   }
 
   const { type, strict, compileOnly, noPersist } = evalOptions;

@@ -367,7 +367,7 @@ extern "C"
     void HAKO_FreeValuePointerRuntime(LEPUSRuntime *rt, LEPUSValue *value);
 
     /**
-     * @brief Frees a void pointer managed by a context
+     * @brief Frees memory that was allocated by a lepus allocator function
      * @category Value Management
      *
      * @param ctx Context that allocated the pointer
@@ -375,7 +375,7 @@ extern "C"
      * @tsparam ctx JSContextPointer
      * @tsparam ptr number
      */
-    void HAKO_FreeVoidPointer(LEPUSContext *ctx, JSVoid *ptr);
+    void HAKO_LEPUSFree(LEPUSContext *ctx, JSVoid *ptr);
 
     /**
      * @brief Frees a C string managed by a context
@@ -903,18 +903,18 @@ extern "C"
      * @param js_code Code to evaluate
      * @param js_code_length Code length
      * @param filename Filename for error reporting
-     * @param detectModule Whether to auto-detect module code
-     * @param evalFlags Evaluation flags
+     * @param detect_module Whether to auto-detect module code
+     * @param eval_flags Evaluation flags
      * @return LEPUSValue* - Evaluation result
      * @tsparam ctx JSContextPointer
      * @tsparam js_code CString
      * @tsparam js_code_length number
      * @tsparam filename CString
-     * @tsparam detectModule number
-     * @tsparam evalFlags number
+     * @tsparam detect_module LEPUS_BOOL
+     * @tsparam eval_flags number
      * @tsreturn JSValuePointer
      */
-    LEPUSValue *HAKO_Eval(LEPUSContext *ctx, BorrowedHeapChar *js_code, size_t js_code_length, BorrowedHeapChar *filename, EvalDetectModule detectModule, EvalFlags evalFlags);
+    LEPUSValue *HAKO_Eval(LEPUSContext *ctx, BorrowedHeapChar *js_code, size_t js_code_length, BorrowedHeapChar *filename, LEPUS_BOOL detect_module, EvalFlags eval_flags);
 
     /**
      * @brief Creates a new promise capability
@@ -1167,6 +1167,59 @@ extern "C"
      * @tsreturn void
      */
     void HAKO_EnableProfileCalls(LEPUSRuntime *rt, uint32_t sampling, JSVoid *opaque);
+
+
+    /**
+     * @brief Compiles JavaScript source code to portable bytecode
+     * Automatically detects ES6 modules vs regular scripts and compiles accordingly
+     * @category Bytecode
+     *
+     * @param ctx JavaScript context to compile in
+     * @param js_code JavaScript source code to compile
+     * @param js_code_length Length of the source code in bytes
+     * @param filename Filename for error reporting and debugging info
+     * @param detect_module Whether to auto-detect module code (.mjs extension or import/export statements)
+     * @param flags Compilation flags (LEPUS_EVAL_TYPE_MODULE, etc.)
+     * @param out_bytecode_length Output parameter to receive bytecode buffer size
+     * @return JSVoid* - Allocated bytecode buffer (caller must free), NULL on compilation error
+     * @tsparam ctx JSContextPointer
+     * @tsparam js_code CString
+     * @tsparam js_code_length number
+     * @tsparam filename CString
+     * @tsparam detect_module LEPUS_BOOL
+     * @tsparam flags number
+     * @tsparam out_bytecode_length number
+     * @tsreturn number
+     */
+    JSVoid *HAKO_CompileToByteCode(LEPUSContext *ctx,
+                                   BorrowedHeapChar *js_code,
+                                   size_t js_code_length,
+                                   BorrowedHeapChar *filename,
+                                   LEPUS_BOOL detect_module,
+                                   EvalFlags flags,
+                                   size_t *out_bytecode_length);
+
+    /**
+     * @brief Evaluates precompiled JavaScript bytecode
+     * Supports both module and script bytecode with appropriate result handling
+     * @category Bytecode
+     *
+     * @param ctx JavaScript context to evaluate in
+     * @param bytecode_buffer Bytecode buffer from HAKO_CompileToByteCode
+     * @param bytecode_length Size of the bytecode buffer in bytes
+     * @param load_only Whether to just load the bytecode without executing it
+     * @return LEPUSValue* - Evaluation result: script return value, module namespace, or exception
+     * @tsparam ctx JSContextPointer
+     * @tsparam bytecode_buffer number
+     * @tsparam bytecode_length number
+     * @tsparam load_only number
+     * @tsreturn JSValuePointer
+     */
+    LEPUSValue *HAKO_EvalByteCode(LEPUSContext *ctx,
+                                  JSVoid *bytecode_buffer,
+                                  size_t bytecode_length,
+                                  LEPUS_BOOL load_only);
+    
 
 #ifdef HAKO_DEBUG_MODE
 #define HAKO_LOG(msg) hako_log(msg)

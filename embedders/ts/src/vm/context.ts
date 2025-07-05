@@ -224,7 +224,7 @@ export class VMContext implements Disposable {
     if (code.length === 0) {
       return DisposableResult.success(this.undefined());
     }
-    const codePtr = this.container.memory.allocateString(code);
+    const codemem = this.container.memory.internString(code);
     let fileName = options.fileName || "file://eval";
     if (!fileName.startsWith("file://")) {
       fileName = `file://${fileName}`;
@@ -237,8 +237,8 @@ export class VMContext implements Disposable {
     try {
       const resultPtr = this.container.exports.HAKO_Eval(
         this.ctxPtr,
-        codePtr,
-        code.length,
+        codemem.pointer,
+        codemem.length,
         filenamePtr,
         detectModule ? 1 : 0,
         flags
@@ -262,8 +262,139 @@ export class VMContext implements Disposable {
         new VMValue(this, resultPtr, ValueLifecycle.Owned)
       );
     } finally {
-      this.container.memory.freeMemory(codePtr);
+      this.container.memory.freeMemory(codemem.pointer);
       this.container.memory.freeMemory(filenamePtr);
+    }
+  }
+
+
+  /**
+   * Compiles JavaScript code to portable bytecode.
+   *
+   * This method compiles JavaScript source code into bytecode that can be
+   * cached, transmitted, or evaluated later. It automatically detects ES6
+   * modules vs regular scripts and compiles accordingly.
+   *
+   * @param code - JavaScript source code to compile
+   * @param options - Compilation options:
+   *                 - type: "global" or "module" (default: auto-detect)
+   *                 - fileName: Name for error messages (default: "eval")
+   *                 - strict: Whether to enforce strict mode
+   *                 - detectModule: Whether to auto-detect module code
+   * @returns Result containing either the bytecode buffer or an error
+   */
+  compileToByteCode(
+    code: string,
+    options: ContextEvalOptions = {}
+  ): VMContextResult<Uint8Array> {
+    if (code.length === 0) {
+      return DisposableResult.success(new Uint8Array(0));
+    }
+
+    const codemem = this.container.memory.internString(code);
+    let fileName = options.fileName || "eval";
+    if (!fileName.startsWith("file://")) {
+      fileName = `file://${fileName}`;
+    }
+
+    const filenamePtr = this.container.memory.allocateString(fileName);
+    const flags = evalOptionsToFlags(options);
+    const detectModule = options.detectModule ?? true; // Default to true for compilation
+    const bytecodeLength = this.container.memory.allocatePointerArray(1);
+
+    try {
+      const bytecodePtr = this.container.exports.HAKO_CompileToByteCode(
+        this.ctxPtr,
+        codemem.pointer,
+        codemem.length,
+        filenamePtr,
+        detectModule ? 1 : 0,
+        flags,
+        bytecodeLength
+      );
+
+      // Check if compilation failed (returns null)
+      if (bytecodePtr === 0) {
+        // Get the last error from the context
+        const exceptionPtr = this.container.error.getLastErrorPointer(this.ctxPtr);
+        if (exceptionPtr !== 0) {
+          return DisposableResult.fail(
+            new VMValue(this, exceptionPtr, ValueLifecycle.Owned),
+            (error) => this.unwrapResult(error)
+          );
+        }
+        // If no exception but still failed, create a generic error
+        return DisposableResult.fail(
+          this.newError(new Error("Compilation failed")),
+          (error) => this.unwrapResult(error)
+        );
+      }
+
+      
+      const length = this.container.memory.readPointer(bytecodeLength);
+      
+      // Copy the bytecode from WASM memory to a Uint8Array
+      const bytecode = this.container.memory.copy(
+        bytecodePtr,
+        length
+      );
+
+      // Free the bytecode buffer allocated by the C function
+      this.container.memory.freeLepusMemory(this.ctxPtr, bytecodePtr);
+
+      return DisposableResult.success(bytecode);
+    } finally {
+      this.container.memory.freeMemory(codemem.pointer);
+      this.container.memory.freeMemory(filenamePtr);
+      this.container.memory.freeMemory(bytecodeLength);
+    }
+  }
+
+ /**
+   * Evaluates precompiled JavaScript bytecode.
+   *
+   * @param bytecode - Bytecode buffer from compileToByteCode
+   * @param options - loadOnly: Only load bytecode without executing
+   * @returns Evaluation result or error
+   */
+  evalByteCode(
+    bytecode: Uint8Array,
+    options: { loadOnly?: boolean } = {}
+  ): VMContextResult<VMValue> {
+    if (bytecode.length === 0) {
+      return DisposableResult.success(this.undefined());
+    }
+
+    // Allocate memory for the bytecode in WASM
+    const bytecodePtr = this.container.memory.writeBytes(bytecode);
+
+    try {
+      const resultPtr = this.container.exports.HAKO_EvalByteCode(
+        this.ctxPtr,
+        bytecodePtr,
+        bytecode.length,
+        options.loadOnly ? 1 : 0
+      );
+
+      // Check for exception
+      const exceptionPtr = this.container.error.getLastErrorPointer(
+        this.ctxPtr,
+        resultPtr
+      );
+
+      if (exceptionPtr !== 0) {
+        this.container.memory.freeValuePointer(this.ctxPtr, resultPtr);
+        return DisposableResult.fail(
+          new VMValue(this, exceptionPtr, ValueLifecycle.Owned),
+          (error) => this.unwrapResult(error)
+        );
+      }
+
+      return DisposableResult.success(
+        new VMValue(this, resultPtr, ValueLifecycle.Owned)
+      );
+    } finally {
+      this.container.memory.freeMemory(bytecodePtr);
     }
   }
 
@@ -680,6 +811,13 @@ export class VMContext implements Disposable {
         isGlobal: isGlobal,
       }
     );
+  }
+
+  dump(value: VMValue): object {
+    const cstring = this.container.exports.HAKO_Dump(this.pointer, value.getHandle());
+    const result = this.container.memory.readString(cstring);
+    this.container.memory.freeCString(this.pointer, cstring);
+    return JSON.parse(result);
   }
 
   /**

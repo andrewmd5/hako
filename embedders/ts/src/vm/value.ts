@@ -1116,6 +1116,11 @@ export class VMValue implements Disposable {
         this.handle
       );
       this.handle = 0;
+    } else if (this.lifecycle === ValueLifecycle.Borrowed) {
+      this.context.container.memory.freeValuePointer(
+        this.context.pointer,
+        this.handle
+      );
     }
   }
 

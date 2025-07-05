@@ -1,8 +1,8 @@
 /**
- * Generated on: 2025-06-24 17:01:53
+ * Generated on: 2025-07-05 03:41:14
  * Source file: hako.h
- * Git commit: 7a9d6e411817d8012facedac0694be2cee4cb846
- * Git branch: next
+ * Git commit: 6d4ea6f1b933493edf9349725341341ed21c7a5e
+ * Git branch: main
  * Git author: andrew <1297077+andrewmd5@users.noreply.github.com>
  * Git remote: https://github.com/andrewmd5/hako.git
  */
@@ -63,6 +63,31 @@ export interface HakoExports {
      * @returns LEPUSValue* - ArrayBuffer containing encoded data
      */
     HAKO_bjson_encode(ctx: JSContextPointer, val: JSValueConstPointer): JSValuePointer;
+
+    // Bytecode
+    /**
+     * Compiles JavaScript source code to portable bytecode
+     *
+     * @param ctx JavaScript context to compile in
+     * @param js_code JavaScript source code to compile
+     * @param js_code_length Length of the source code in bytes
+     * @param filename Filename for error reporting and debugging info
+     * @param detect_module Whether to auto-detect module code (.mjs extension or import/export statements)
+     * @param flags Compilation flags (LEPUS_EVAL_TYPE_MODULE, etc.)
+     * @param out_bytecode_length Output parameter to receive bytecode buffer size
+     * @returns JSVoid* - Allocated bytecode buffer (caller must free), NULL on compilation error
+     */
+    HAKO_CompileToByteCode(ctx: JSContextPointer, js_code: CString, js_code_length: number, filename: CString, detect_module: LEPUS_BOOL, flags: number, out_bytecode_length: number): number;
+    /**
+     * Evaluates precompiled JavaScript bytecode
+     *
+     * @param ctx JavaScript context to evaluate in
+     * @param bytecode_buffer Bytecode buffer from HAKO_CompileToByteCode
+     * @param bytecode_length Size of the bytecode buffer in bytes
+     * @param load_only Whether to just load the bytecode without executing it
+     * @returns LEPUSValue* - Evaluation result: script return value, module namespace, or exception
+     */
+    HAKO_EvalByteCode(ctx: JSContextPointer, bytecode_buffer: number, bytecode_length: number, load_only: number): JSValuePointer;
 
     // Constants
     /**
@@ -234,11 +259,11 @@ export interface HakoExports {
      * @param js_code Code to evaluate
      * @param js_code_length Code length
      * @param filename Filename for error reporting
-     * @param detectModule Whether to auto-detect module code
-     * @param evalFlags Evaluation flags
+     * @param detect_module Whether to auto-detect module code
+     * @param eval_flags Evaluation flags
      * @returns LEPUSValue* - Evaluation result
      */
-    HAKO_Eval(ctx: JSContextPointer, js_code: CString, js_code_length: number, filename: CString, detectModule: number, evalFlags: number): JSValuePointer;
+    HAKO_Eval(ctx: JSContextPointer, js_code: CString, js_code_length: number, filename: CString, detect_module: LEPUS_BOOL, eval_flags: number): JSValuePointer;
 
     // Interrupt Handling
     /**
@@ -510,12 +535,12 @@ export interface HakoExports {
      */
     HAKO_FreeValuePointerRuntime(rt: JSRuntimePointer, value: JSValuePointer): void;
     /**
-     * Frees a void pointer managed by a context
+     * Frees memory that was allocated by a lepus allocator function
      *
      * @param ctx Context that allocated the pointer
      * @param ptr Pointer to free
      */
-    HAKO_FreeVoidPointer(ctx: JSContextPointer, ptr: number): void;
+    HAKO_LEPUSFree(ctx: JSContextPointer, ptr: number): void;
 
     // Value Operations
     /**

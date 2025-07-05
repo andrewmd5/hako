@@ -2,6 +2,7 @@ import type {
   ContextOptions,
   ExecutePendingJobsResult,
   JSVoid,
+  ModuleResolverFunction,
   ProfilerEventHandler,
   StripOptions,
 } from "@hako/etc/types";
@@ -158,14 +159,14 @@ export class HakoRuntime implements Disposable {
    * // Strip all debug info (including source)
    * runtime.setStripInfo({ stripDebug: true });
    */
-  setStripInfo(options: StripOptions): void {
+  setStripInfo(options?: StripOptions): void {
     let flags = 0;
 
-    if (options.stripSource) {
+    if (options?.stripSource) {
       flags |= JS_STRIP_SOURCE;
     }
 
-    if (options.stripDebug) {
+    if (options?.stripDebug) {
       flags |= JS_STRIP_DEBUG;
     }
 
@@ -292,14 +293,19 @@ export class HakoRuntime implements Disposable {
    *
    * @param loader - Function to load module source code given a module specifier
    * @param normalizer - Optional function to normalize module names (resolve relative paths, etc.)
+   * @param resolver - Optional function to handle import.meta.resolve calls
    */
   enableModuleLoader(
     loader: ModuleLoaderFunction,
-    normalizer?: ModuleNormalizerFunction
+    normalizer?: ModuleNormalizerFunction,
+    resolver?: ModuleResolverFunction
   ): void {
     this.container.callbacks.setModuleLoader(loader);
     if (normalizer) {
       this.container.callbacks.setModuleNormalizer(normalizer);
+    }
+    if (resolver) {
+      this.container.callbacks.setModuleResolver(resolver);
     }
     this.container.exports.HAKO_RuntimeEnableModuleLoader(
       this.rtPtr,

@@ -41,12 +41,17 @@ host_interrupt_handler(LEPUSRuntime *rt, LEPUSContext *ctx, void *opaque);
 __attribute__((import_module("hako"),
                import_name("load_module_source"))) extern char *
 host_load_module_source(LEPUSRuntime *rt, LEPUSContext *ctx,
-                        CString *module_name);
+                        CString *module_name, void *opaque);
 
 __attribute__((import_module("hako"),
                import_name("normalize_module"))) extern char *
 host_normalize_module(LEPUSRuntime *rt, LEPUSContext *ctx,
-                      CString *module_base_name, CString *module_name);
+                      CString *module_base_name, CString *module_name, void *opaque);
+
+__attribute__((import_module("hako"),
+               import_name("resolve_module"))) extern char *
+host_resolve_module(LEPUSRuntime *rt, LEPUSContext *ctx,
+                    CString *module_name, CString *current_module, void *opaque);
 
 __attribute__((import_module("hako"),
                import_name("profile_function_start"))) extern void
@@ -56,19 +61,6 @@ __attribute__((import_module("hako"),
                import_name("profile_function_end"))) extern void
 host_profile_function_end(LEPUSContext *ctx, CString *event, JSVoid *opaque);
 
-static const char *HAKO_BAD_FREE_MSG =
-    "+---------------------------------------------------------+\n"
-    "|                    FATAL ERROR #1                       |\n"
-    "+---------------------------------------------------------+\n"
-    "| Attempted to free constant JavaScript primitive:        |\n"
-    "| Address: %p                                             |\n"
-    "|                                                         |\n"
-    "| Cannot free undefined/null/true/false as these are      |\n"
-    "| static values. Doing so would cause undefined behavior  |\n"
-    "| and probable memory corruption.                         |\n"
-    "|                                                         |\n"
-    "| Fix: Check value ownership before attempting to free.   |\n"
-    "+---------------------------------------------------------+\n";
 
 static HakoBuildInfo build_info = {.version = HAKO_VERSION,
                                    .flags = HAKO_BUILD_FLAGS_VALUE,
@@ -78,6 +70,17 @@ static HakoBuildInfo build_info = {.version = HAKO_VERSION,
                                    .llvm = WASI_LLVM,
                                    .llvm_version = WASI_LLVM_VERSION,
                                    .config = WASI_CONFIG};
+
+static int ends_with(const char *str, const char *suffix)
+{
+  if (!str || !suffix)
+    return 0;
+  size_t lenstr = strlen(str);
+  size_t lensuffix = strlen(suffix);
+  if (lensuffix > lenstr)
+    return 0;
+  return strncmp(str + lenstr - lensuffix, suffix, lensuffix) == 0;
+}
 
 hako_RuntimeData *hako_get_runtime_data(LEPUSRuntime *rt)
 {
@@ -109,8 +112,6 @@ void hako_dump(LEPUSContext *ctx, LEPUSValueConst value)
   LEPUS_FreeCString(ctx, str);
   putchar('\n');
 }
-
-
 
 #define MAX_EVENT_BUFFER_SIZE 1024
 static char event_buffer[MAX_EVENT_BUFFER_SIZE];
@@ -167,7 +168,7 @@ static void hako_profile_function_start(LEPUSContext *ctx, JSAtom func, JSAtom f
 
 static void hako_profile_function_end(LEPUSContext *ctx, JSAtom func, JSAtom filename, void *opaque)
 {
-  
+
   __wasi_errno_t err;
   __wasi_timestamp_t current_time;
   // Get the current time using WASI
@@ -197,8 +198,8 @@ static void hako_profile_function_end(LEPUSContext *ctx, JSAtom func, JSAtom fil
   }
 }
 
-static struct LEPUSModuleDef *hako_compile_module(LEPUSContext *ctx, CString *module_name,
-                                                  BorrowedHeapChar *module_body)
+static LEPUSModuleDef *hako_compile_module(LEPUSContext *ctx, CString *module_name,
+                                           BorrowedHeapChar *module_body)
 {
   // Use explicit flags for module compilation
   int eval_flags = LEPUS_EVAL_TYPE_MODULE | LEPUS_EVAL_FLAG_COMPILE_ONLY |
@@ -221,17 +222,24 @@ static struct LEPUSModuleDef *hako_compile_module(LEPUSContext *ctx, CString *mo
     return NULL;
   }
 
-  struct LEPUSModuleDef *module = LEPUS_VALUE_GET_PTR(func_val);
+  // Set import.meta for this module - not main since it's loaded as a dependency
+  if (LEPUS_SetImportMeta(ctx, func_val, TRUE, FALSE) < 0)
+  {
+    LEPUS_FreeValue(ctx, func_val);
+    return NULL;
+  }
+
+  LEPUSModuleDef *module = LEPUS_VALUE_GET_PTR(func_val);
   LEPUS_FreeValue(ctx, func_val);
 
   return module;
 }
 
 static LEPUSModuleDef *hako_load_module(LEPUSContext *ctx, CString *module_name,
-                                        void *_unused)
+                                        void *user_data)
 {
   LEPUSRuntime *rt = LEPUS_GetRuntime(ctx);
-  char *module_source = host_load_module_source(rt, ctx, module_name);
+  char *module_source = host_load_module_source(rt, ctx, module_name, user_data);
   if (module_source == NULL)
   {
     LEPUS_ThrowTypeError(
@@ -248,14 +256,31 @@ static LEPUSModuleDef *hako_load_module(LEPUSContext *ctx, CString *module_name,
 }
 
 static char *hako_normalize_module(LEPUSContext *ctx, CString *module_base_name,
-                                   CString *module_name, void *_unused)
+                                   CString *module_name, void *user_data)
 {
   LEPUSRuntime *rt = LEPUS_GetRuntime(ctx);
   char *normalized_module_name =
-      host_normalize_module(rt, ctx, module_base_name, module_name);
+      host_normalize_module(rt, ctx, module_base_name, module_name, user_data);
   char *js_module_name = lepus_strdup(ctx, normalized_module_name, 1);
   free(normalized_module_name);
   return js_module_name;
+}
+
+static char *hako_resolve_module(LEPUSContext *ctx,
+                                 CString *module_name,
+                                 CString *current_module, void *user_data)
+{
+  LEPUSRuntime *rt = LEPUS_GetRuntime(ctx);
+  char *resolved_module_name = host_resolve_module(rt, ctx, module_name, current_module, user_data);
+
+  if (resolved_module_name == NULL)
+  {
+    return NULL;
+  }
+
+  char *js_resolved_module_name = lepus_strdup(ctx, resolved_module_name, 1);
+  free(resolved_module_name);
+  return js_resolved_module_name;
 }
 
 static LEPUSValue *jsvalue_to_heap(LEPUSValueConst value)
@@ -482,7 +507,12 @@ LEPUSContext *WASM_EXPORT(HAKO_NewContext)(LEPUSRuntime *rt,
 {
   if (intrinsics == 0)
   {
-    return LEPUS_NewContext(rt);
+    LEPUSContext *ctx = LEPUS_NewContext(rt);
+    if (ctx == NULL)
+    {
+      return NULL;
+    }
+    return ctx;
   }
 
   LEPUSContext *ctx = LEPUS_NewContextRaw(rt);
@@ -545,7 +575,7 @@ LEPUSContext *WASM_EXPORT(HAKO_NewContext)(LEPUSRuntime *rt,
 
 void WASM_EXPORT(HAKO_SetContextData)(LEPUSContext *ctx, JSVoid *data)
 {
-    LEPUS_SetContextOpaque(ctx, data);
+  LEPUS_SetContextOpaque(ctx, data);
 }
 
 JSVoid *WASM_EXPORT(HAKO_GetContextData)(LEPUSContext *ctx)
@@ -571,11 +601,12 @@ void WASM_EXPORT(HAKO_FreeContext)(LEPUSContext *ctx)
 void WASM_EXPORT(HAKO_FreeValuePointer)(LEPUSContext *ctx,
                                         LEPUSValue *value)
 {
-  if (value == &HAKO_Undefined || value == &HAKO_Null || value == &HAKO_True ||
-      value == &HAKO_False)
+  if (LEPUS_VALUE_IS_BOOL(*value) ||
+      LEPUS_VALUE_IS_NULL(*value) || LEPUS_VALUE_IS_UNDEFINED(*value))
   {
-    fprintf(stderr, HAKO_BAD_FREE_MSG, (void *)value);
-    __builtin_trap();
+    LEPUS_FreeValue(ctx, *value);
+    free(value);
+    return;
   }
   LEPUS_FreeValue(ctx, *value);
   free(value);
@@ -584,17 +615,18 @@ void WASM_EXPORT(HAKO_FreeValuePointer)(LEPUSContext *ctx,
 void WASM_EXPORT(HAKO_FreeValuePointerRuntime)(LEPUSRuntime *rt,
                                                LEPUSValue *value)
 {
-  if (value == &HAKO_Undefined || value == &HAKO_Null || value == &HAKO_True ||
-      value == &HAKO_False)
+  if (LEPUS_VALUE_IS_BOOL(*value) ||
+      LEPUS_VALUE_IS_NULL(*value) || LEPUS_VALUE_IS_UNDEFINED(*value))
   {
-    fprintf(stderr, HAKO_BAD_FREE_MSG, (void *)value);
-    __builtin_trap();
+    LEPUS_FreeValueRT(rt, *value);
+   free(value);
+    return;
   }
   LEPUS_FreeValueRT(rt, *value);
   free(value);
 }
 
-void WASM_EXPORT(HAKO_FreeVoidPointer)(LEPUSContext *ctx, JSVoid *ptr)
+void WASM_EXPORT(HAKO_LEPUSFree)(LEPUSContext *ctx, JSVoid *ptr)
 {
   lepus_free(ctx, ptr);
 }
@@ -700,147 +732,59 @@ LEPUSValue hako_resolve_func_data(LEPUSContext *ctx, LEPUSValueConst this_val,
 {
   return LEPUS_DupValue(ctx, func_data[0]);
 }
-
 LEPUSValue *WASM_EXPORT(HAKO_Eval)(LEPUSContext *ctx, BorrowedHeapChar *js_code,
                                    size_t js_code_length, BorrowedHeapChar *filename,
-                                   EvalDetectModule detectModule,
-                                   EvalFlags evalFlags)
+                                   LEPUS_BOOL detect_module,
+                                   EvalFlags eval_flags)
 {
-  // Only detect module if detection is enabled and module type isn't already
-  // specified
-  if (detectModule && (evalFlags & LEPUS_EVAL_TYPE_MODULE) == 0)
+  // Only detect module if detection is enabled and module type isn't already specified
+  if (detect_module && (eval_flags & LEPUS_EVAL_TYPE_MODULE) == 0)
   {
-    bool isModule = LEPUS_DetectModule(js_code, js_code_length);
-    if (isModule)
+    if (ends_with(filename, ".mjs") || LEPUS_DetectModule(js_code, js_code_length))
     {
-      evalFlags |= LEPUS_EVAL_TYPE_MODULE;
+      eval_flags |= LEPUS_EVAL_TYPE_MODULE | LEPUS_EVAL_FLAG_STRICT;
     }
   }
 
-  LEPUSModuleDef *module = NULL;
-  LEPUSValue eval_result;
-  bool is_module = (evalFlags & LEPUS_EVAL_TYPE_MODULE) != 0;
+  bool is_module = (eval_flags & LEPUS_EVAL_TYPE_MODULE) != 0;
 
-  // Compile and evaluate module code specially
-  if (is_module && (evalFlags & LEPUS_EVAL_FLAG_COMPILE_ONLY) == 0)
+  // For modules that need full evaluation (not compile-only), use the bytecode path
+  // This ensures we get the namespace instead of undefined
+  if (is_module && (eval_flags & LEPUS_EVAL_FLAG_COMPILE_ONLY) == 0)
   {
-    LEPUSValue func_obj = LEPUS_Eval(ctx, js_code, js_code_length, filename,
-                                     evalFlags | LEPUS_EVAL_FLAG_COMPILE_ONLY);
-    if (LEPUS_IsException(func_obj))
+    // First compile to bytecode
+    size_t bytecode_length;
+    JSVoid *bytecode = HAKO_CompileToByteCode(ctx, js_code, js_code_length, filename, 
+                                               FALSE, // Don't detect again 
+                                               eval_flags, &bytecode_length);
+    if (!bytecode)
     {
-      return jsvalue_to_heap(func_obj);
+      return jsvalue_to_heap(LEPUS_GetException(ctx));
     }
 
-    if (!LEPUS_VALUE_IS_MODULE(func_obj))
-    {
-      LEPUS_FreeValue(ctx, func_obj);
-      return jsvalue_to_heap(LEPUS_ThrowTypeError(
-          ctx, "Module code compiled to non-module object"));
-    }
-
-    module = LEPUS_VALUE_GET_PTR(func_obj);
-    if (module == NULL)
-    {
-      LEPUS_FreeValue(ctx, func_obj);
-      return jsvalue_to_heap(
-          LEPUS_ThrowTypeError(ctx, "Module compiled to null"));
-    }
-
-    eval_result = LEPUS_EvalFunction(ctx, func_obj, LEPUS_UNDEFINED);
-  }
-  else
-  {
-    // Regular evaluation for non-module code or compile-only
-    eval_result = LEPUS_Eval(ctx, js_code, js_code_length, filename, evalFlags);
+    // Then evaluate the bytecode (this will return the namespace)
+    LEPUSValue *result = HAKO_EvalByteCode(ctx, bytecode, bytecode_length, FALSE);
+    
+    // Free the bytecode buffer
+    lepus_free(ctx, bytecode);
+    
+    return result;
   }
 
-  // If we got an exception or not a promise, return it directly
-  if (LEPUS_IsException(eval_result) || !LEPUS_IsPromise(eval_result))
+  // For scripts and compile-only operations, use direct evaluation
+  LEPUSValue eval_result = LEPUS_Eval(ctx, js_code, js_code_length, filename, eval_flags);
+
+  // For compile-only modules, set import.meta
+  if (is_module && (eval_flags & LEPUS_EVAL_FLAG_COMPILE_ONLY) != 0)
   {
-    // For non-promise modules, return the module namespace
-    if (is_module && !LEPUS_IsPromise(eval_result) &&
-        !LEPUS_IsException(eval_result))
+    if (LEPUS_SetImportMeta(ctx, eval_result, TRUE, TRUE) < 0)
     {
-      LEPUSValue module_namespace = LEPUS_GetModuleNamespace(ctx, module);
       LEPUS_FreeValue(ctx, eval_result);
-      return jsvalue_to_heap(module_namespace);
-    }
-
-    // For everything else, return the eval result directly
-    return jsvalue_to_heap(eval_result);
-  }
-
-  // At this point, we know we're dealing with a promise
-  LEPUSPromiseStateEnum state = LEPUS_PromiseState(ctx, eval_result);
-
-  // Handle promise based on its state
-  if (state == LEPUS_PROMISE_FULFILLED || state == -1)
-  {
-    // For fulfilled promises with modules, return the namespace
-    if (is_module)
-    {
-      LEPUSValue module_namespace = LEPUS_GetModuleNamespace(ctx, module);
-      LEPUS_FreeValue(ctx, eval_result);
-      return jsvalue_to_heap(module_namespace);
-    }
-    else
-    {
-      // For non-modules, get the promise result
-      LEPUSValue result = LEPUS_PromiseResult(ctx, eval_result);
-      LEPUS_FreeValue(ctx, eval_result);
-      return jsvalue_to_heap(result);
+      return jsvalue_to_heap(LEPUS_GetException(ctx));
     }
   }
-  else if (state == LEPUS_PROMISE_REJECTED)
-  {
-    // For rejected promises, throw the rejection reason
-    LEPUSValue reason = LEPUS_PromiseResult(ctx, eval_result);
-    LEPUS_Throw(ctx, reason);
-    LEPUS_FreeValue(ctx, reason);
-    LEPUS_FreeValue(ctx, eval_result);
-    return jsvalue_to_heap(LEPUS_EXCEPTION);
-  }
-  else if (state == LEPUS_PROMISE_PENDING)
-  {
-    // For pending promises, handle differently based on whether it's a module
-    if (is_module)
-    {
-      LEPUSValue module_namespace = LEPUS_GetModuleNamespace(ctx, module);
-      if (LEPUS_IsException(module_namespace))
-      {
-        LEPUS_FreeValue(ctx, eval_result);
-        return jsvalue_to_heap(module_namespace);
-      }
 
-      LEPUSValue then_resolve_module_namespace = LEPUS_NewCFunctionData(
-          ctx, &hako_resolve_func_data, 0, 0, 1, &module_namespace);
-      LEPUS_FreeValue(ctx, module_namespace);
-      if (LEPUS_IsException(then_resolve_module_namespace))
-      {
-        LEPUS_FreeValue(ctx, eval_result);
-        return jsvalue_to_heap(then_resolve_module_namespace);
-      }
-
-      LEPUSAtom then_atom = LEPUS_NewAtom(ctx, "then");
-      LEPUSValueConst then_args[1] = {then_resolve_module_namespace};
-      LEPUSValue new_promise =
-          LEPUS_Invoke(ctx, eval_result, then_atom, 1, then_args);
-      LEPUS_FreeAtom(ctx, then_atom);
-      LEPUS_FreeValue(ctx, then_resolve_module_namespace);
-      LEPUS_FreeValue(ctx, eval_result);
-      return jsvalue_to_heap(new_promise);
-    }
-    else
-    {
-      // For non-modules, return the promise directly
-      return jsvalue_to_heap(eval_result);
-    }
-  }
-  else
-  {
-    // Unknown promise state, return as is
-    return jsvalue_to_heap(eval_result);
-  }
+  return jsvalue_to_heap(eval_result);
 }
 
 LEPUSValue *WASM_EXPORT(HAKO_NewSymbol)(LEPUSContext *ctx,
@@ -1288,16 +1232,21 @@ JSBorrowedChar *WASM_EXPORT(HAKO_Dump)(LEPUSContext *ctx,
   return error_buffer;
 }
 
-LEPUSValue *
-WASM_EXPORT(HAKO_GetModuleNamespace)(LEPUSContext *ctx,
-                                     LEPUSValueConst *module_func_obj)
+LEPUS_BOOL WASM_EXPORT(HAKO_IsModule)(LEPUSContext *ctx,
+                                      LEPUSValueConst *module_func_obj)
+{
+  return LEPUS_VALUE_IS_MODULE(*module_func_obj);
+}
+
+LEPUSValue *WASM_EXPORT(HAKO_GetModuleNamespace)(LEPUSContext *ctx,
+                                                 LEPUSValueConst *module_func_obj)
 {
   if (!LEPUS_VALUE_IS_MODULE(*module_func_obj))
   {
     return jsvalue_to_heap(LEPUS_ThrowTypeError(ctx, "Not a module"));
   }
 
-  struct LEPUSModuleDef *module = LEPUS_VALUE_GET_PTR(*module_func_obj);
+  LEPUSModuleDef *module = LEPUS_VALUE_GET_PTR(*module_func_obj);
   return jsvalue_to_heap(LEPUS_GetModuleNamespace(ctx, module));
 }
 
@@ -1519,12 +1468,12 @@ void WASM_EXPORT(HAKO_RuntimeEnableModuleLoader)(LEPUSRuntime *rt,
   {
     module_normalize = hako_normalize_module;
   }
-  LEPUS_SetModuleLoaderFunc(rt, module_normalize, hako_load_module, NULL);
+  LEPUS_SetModuleLoaderFunc(rt, module_normalize, hako_load_module, hako_resolve_module, NULL);
 }
 
 void WASM_EXPORT(HAKO_RuntimeDisableModuleLoader)(LEPUSRuntime *rt)
 {
-  LEPUS_SetModuleLoaderFunc(rt, NULL, NULL, NULL);
+  LEPUS_SetModuleLoaderFunc(rt, NULL, NULL, NULL, NULL);
 }
 
 LEPUSValue *WASM_EXPORT(HAKO_bjson_encode)(LEPUSContext *ctx,
@@ -1586,7 +1535,7 @@ HAKO_TypedArrayType WASM_EXPORT(HAKO_GetTypedArrayType)(LEPUSContext *ctx,
     return HAKO_TYPED_UINT32_ARRAY;
   case LEPUS_TYPED_INT32_ARRAY:
     return HAKO_TYPED_INT32_ARRAY;
-   case LEPUS_TYPED_FLOAT16_ARRAY:
+  case LEPUS_TYPED_FLOAT16_ARRAY:
     return HAKO_TYPED_FLOAT16_ARRAY;
   case LEPUS_TYPED_FLOAT32_ARRAY:
     return HAKO_TYPED_FLOAT32_ARRAY;
@@ -1740,9 +1689,84 @@ HakoBuildInfo *WASM_EXPORT(HAKO_BuildInfo)()
   return &build_info;
 }
 
-void *thread_entry_point(void *ctx)
+JSVoid *WASM_EXPORT(HAKO_CompileToByteCode)(LEPUSContext *ctx,
+                                            BorrowedHeapChar *js_code,
+                                            size_t js_code_length,
+                                            BorrowedHeapChar *filename,
+                                            LEPUS_BOOL detect_module,
+                                            EvalFlags flags,
+                                            size_t *out_bytecode_length)
 {
-  int id = (int)ctx;
-  printf(" in thread %d\n", id);
-  return 0;
+  if (!js_code || !filename || !out_bytecode_length)
+  {
+    LEPUS_ThrowTypeError(ctx, "Invalid arguments");
+    return NULL;
+  }
+
+  // Only detect module if detection is enabled and module type isn't already specified
+  if (detect_module && (flags & LEPUS_EVAL_TYPE_MODULE) == 0)
+  {
+    if (ends_with(filename, ".mjs") || LEPUS_DetectModule(js_code, js_code_length))
+    {
+      flags |= LEPUS_EVAL_TYPE_MODULE | LEPUS_EVAL_FLAG_STRICT;
+    }
+  }
+
+  // Force compile-only flag
+  flags |= LEPUS_EVAL_FLAG_COMPILE_ONLY;
+  bool is_module = (flags & LEPUS_EVAL_TYPE_MODULE) != 0;
+
+  // Compile the JavaScript code
+  LEPUSValue compiled_obj = LEPUS_Eval(ctx, js_code, js_code_length, filename, flags);
+  if (LEPUS_IsException(compiled_obj))
+  {
+    return NULL;
+  }
+
+  // Set import.meta for modules - anything compiled through HAKO is main
+  if (is_module)
+  {
+    if (LEPUS_SetImportMeta(ctx, compiled_obj, TRUE, TRUE) < 0)
+    {
+      LEPUS_FreeValue(ctx, compiled_obj);
+      return NULL;
+    }
+  }
+
+  // Convert compiled object to bytecode using LEPUS_WriteObject
+  size_t bytecode_len;
+  int write_flags = LEPUS_WRITE_OBJ_BYTECODE;
+  uint8_t *lepus_bytecode_buf = LEPUS_WriteObject(ctx, &bytecode_len, compiled_obj, write_flags);
+
+  // Free the compiled object first
+  LEPUS_FreeValue(ctx, compiled_obj);
+
+  if (!lepus_bytecode_buf)
+  {
+    LEPUS_ThrowInternalError(ctx, "Failed to serialize bytecode");
+    return NULL;
+  }
+
+  *out_bytecode_length = bytecode_len;
+  return (JSVoid *)lepus_bytecode_buf;
+}
+
+LEPUSValue *WASM_EXPORT(HAKO_EvalByteCode)(LEPUSContext *ctx,
+                                           JSVoid *bytecode_buffer,
+                                           size_t bytecode_length,
+                                           LEPUS_BOOL load_only)
+{
+  if (!bytecode_buffer || bytecode_length == 0)
+  {
+    return jsvalue_to_heap(LEPUS_ThrowTypeError(ctx, "Invalid bytecode buffer"));
+  }
+
+  // Use LEPUS_EvalBinary with all the module logic moved inside
+  int flags = load_only ? LEPUS_EVAL_BINARY_LOAD_ONLY : 0;
+  LEPUSValue eval_result = LEPUS_EvalBinary(ctx,
+                                            (const uint8_t *)bytecode_buffer,
+                                            bytecode_length,
+                                            flags);
+
+  return jsvalue_to_heap(eval_result);
 }
