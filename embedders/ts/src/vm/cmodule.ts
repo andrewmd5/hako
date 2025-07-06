@@ -276,7 +276,7 @@ export class CModuleClass implements Disposable {
         context: VMContext,
         name: string,
         constructorFn: (instance: VMValue, args: VMValue[], newTarget: VMValue) => void,
-        options: Omit<ClassOptions, 'constructor'> = {}
+        options: ClassOptions = {}
     ) {
         this.context = context;
 
