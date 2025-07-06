@@ -2,7 +2,6 @@ import type {
   ContextOptions,
   ExecutePendingJobsResult,
   JSVoid,
-  ModuleInitFunction,
   ModuleResolverFunction,
   ProfilerEventHandler,
   StripOptions,
@@ -10,7 +9,6 @@ import type {
 import type { Container } from "@hako/runtime/container";
 import { VMContext } from "@hako/vm/context";
 import {
-  Intrinsic,
   type JSRuntimePointer,
   type MemoryUsage,
   type ModuleLoaderFunction,

@@ -271,7 +271,6 @@ export class CModuleClass implements Disposable {
     private proto: VMValue | undefined;
     private ctorFunction: VMValue | undefined;
     private disposed = false;
-    private parentInitializer: CModuleInitializer | null = null;
 
     constructor(
         context: VMContext,
@@ -298,7 +297,7 @@ export class CModuleClass implements Disposable {
             this.setupClass(name, options);
 
             // Register inheritance-aware constructor wrapper
-            const internalConstructor: ClassConstructorHandler = (ctx, newTarget, args, classId) => {
+            const internalConstructor: ClassConstructorHandler = (_ctx, newTarget, args, _classId) => {
                 using protoProperty = newTarget.getProperty("prototype");
                 if (!protoProperty || context.getLastError(protoProperty)) {
                     throw new HakoError("Failed to get prototype from new_target");
@@ -329,7 +328,6 @@ export class CModuleClass implements Disposable {
 
     /** @internal */
     _setParentInitializer(initializer: CModuleInitializer): void {
-        this.parentInitializer = initializer;
     }
 
     private setupClass(name: string, options: Omit<ClassOptions, 'constructor'>): void {
