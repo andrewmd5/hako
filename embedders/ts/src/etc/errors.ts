@@ -15,9 +15,10 @@ export class HakoError extends Error {
    * Creates a new HakoError instance.
    *
    * @param message - The error message
+   * @param options - Error options including optional cause
    */
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "HakoError";
   }
 }
