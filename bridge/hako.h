@@ -8,6 +8,7 @@ extern "C" {
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
 #include "build.h"
 #include "quickjs.h"
 
@@ -165,8 +166,7 @@ LEPUS_BOOL HAKO_IsJobPending(LEPUSRuntime* rt);
  * @tsparam lastJobContext number
  * @tsreturn JSValuePointer
  */
-LEPUSValue* HAKO_ExecutePendingJob(LEPUSRuntime* rt,
-                                   int maxJobsToExecute,
+LEPUSValue* HAKO_ExecutePendingJob(LEPUSRuntime* rt, int maxJobsToExecute,
                                    LEPUSContext** lastJobContext);
 
 /**
@@ -516,8 +516,7 @@ LEPUSValue* HAKO_NewArray(LEPUSContext* ctx);
  * @tsparam length number
  * @tsreturn JSValuePointer
  */
-LEPUSValue* HAKO_NewArrayBuffer(LEPUSContext* ctx,
-                                JSVoid* buffer,
+LEPUSValue* HAKO_NewArrayBuffer(LEPUSContext* ctx, JSVoid* buffer,
                                 size_t length);
 
 /**
@@ -533,8 +532,7 @@ LEPUSValue* HAKO_NewArrayBuffer(LEPUSContext* ctx,
  * @tsparam prop_name JSValueConstPointer
  * @tsreturn JSValuePointer
  */
-LEPUSValue* HAKO_GetProp(LEPUSContext* ctx,
-                         LEPUSValueConst* this_val,
+LEPUSValue* HAKO_GetProp(LEPUSContext* ctx, LEPUSValueConst* this_val,
                          LEPUSValueConst* prop_name);
 
 /**
@@ -550,8 +548,7 @@ LEPUSValue* HAKO_GetProp(LEPUSContext* ctx,
  * @tsparam prop_name number
  * @tsreturn JSValuePointer
  */
-LEPUSValue* HAKO_GetPropNumber(LEPUSContext* ctx,
-                               LEPUSValueConst* this_val,
+LEPUSValue* HAKO_GetPropNumber(LEPUSContext* ctx, LEPUSValueConst* this_val,
                                int prop_name);
 
 /**
@@ -569,8 +566,7 @@ LEPUSValue* HAKO_GetPropNumber(LEPUSContext* ctx,
  * @tsparam prop_value JSValueConstPointer
  * @tsreturn LEPUS_BOOL
  */
-LEPUS_BOOL HAKO_SetProp(LEPUSContext* ctx,
-                        LEPUSValueConst* this_val,
+LEPUS_BOOL HAKO_SetProp(LEPUSContext* ctx, LEPUSValueConst* this_val,
                         LEPUSValueConst* prop_name,
                         LEPUSValueConst* prop_value);
 
@@ -599,15 +595,11 @@ LEPUS_BOOL HAKO_SetProp(LEPUSContext* ctx,
  * @tsparam has_value LEPUS_BOOL
  * @tsreturn LEPUS_BOOL
  */
-LEPUS_BOOL HAKO_DefineProp(LEPUSContext* ctx,
-                           LEPUSValueConst* this_val,
+LEPUS_BOOL HAKO_DefineProp(LEPUSContext* ctx, LEPUSValueConst* this_val,
                            LEPUSValueConst* prop_name,
-                           LEPUSValueConst* prop_value,
-                           LEPUSValueConst* get,
-                           LEPUSValueConst* set,
-                           LEPUS_BOOL configurable,
-                           LEPUS_BOOL enumerable,
-                           LEPUS_BOOL has_value);
+                           LEPUSValueConst* prop_value, LEPUSValueConst* get,
+                           LEPUSValueConst* set, LEPUS_BOOL configurable,
+                           LEPUS_BOOL enumerable, LEPUS_BOOL has_value);
 
 /**
  * @brief Gets all own property names of an object
@@ -626,10 +618,8 @@ LEPUS_BOOL HAKO_DefineProp(LEPUSContext* ctx,
  * @tsparam flags number
  * @tsreturn JSValuePointer
  */
-LEPUSValue* HAKO_GetOwnPropertyNames(LEPUSContext* ctx,
-                                     LEPUSValue*** out_ptrs,
-                                     uint32_t* out_len,
-                                     LEPUSValueConst* obj,
+LEPUSValue* HAKO_GetOwnPropertyNames(LEPUSContext* ctx, LEPUSValue*** out_ptrs,
+                                     uint32_t* out_len, LEPUSValueConst* obj,
                                      int flags);
 
 /**
@@ -656,8 +646,7 @@ LEPUSValue* HAKO_GetGlobalObject(LEPUSContext* ctx);
  * @tsparam value JSValueConstPointer
  * @tsreturn number
  */
-int HAKO_GetLength(LEPUSContext* ctx,
-                   uint32_t* out_len,
+int HAKO_GetLength(LEPUSContext* ctx, uint32_t* out_len,
                    LEPUSValueConst* value);
 
 /**
@@ -776,8 +765,7 @@ JSBorrowedChar* HAKO_ToCString(LEPUSContext* ctx, LEPUSValueConst* value);
  * @tsparam isGlobal number
  * @tsreturn JSValuePointer
  */
-LEPUSValue* HAKO_NewSymbol(LEPUSContext* ctx,
-                           BorrowedHeapChar* description,
+LEPUSValue* HAKO_NewSymbol(LEPUSContext* ctx, BorrowedHeapChar* description,
                            int isGlobal);
 
 /**
@@ -888,10 +876,8 @@ LEPUS_BOOL HAKO_IsArrayBuffer(LEPUSValueConst* value);
  * @tsparam op number
  * @tsreturn LEPUS_BOOL
  */
-LEPUS_BOOL HAKO_IsEqual(LEPUSContext* ctx,
-                        LEPUSValueConst* a,
-                        LEPUSValueConst* b,
-                        IsEqualOp op);
+LEPUS_BOOL HAKO_IsEqual(LEPUSContext* ctx, LEPUSValueConst* a,
+                        LEPUSValueConst* b, IsEqualOp op);
 
 /**
  * @brief Copy the buffer from a guest ArrayBuffer
@@ -906,8 +892,7 @@ LEPUS_BOOL HAKO_IsEqual(LEPUSContext* ctx,
  * @tsparam out_len number
  * @tsreturn number
  */
-JSVoid* HAKO_CopyArrayBuffer(LEPUSContext* ctx,
-                             LEPUSValueConst* data,
+JSVoid* HAKO_CopyArrayBuffer(LEPUSContext* ctx, LEPUSValueConst* data,
                              size_t* out_len);
 
 /**
@@ -923,8 +908,7 @@ JSVoid* HAKO_CopyArrayBuffer(LEPUSContext* ctx,
  * @tsparam out_len number
  * @tsreturn number
  */
-JSVoid* HAKO_CopyTypedArrayBuffer(LEPUSContext* ctx,
-                                  LEPUSValueConst* data,
+JSVoid* HAKO_CopyTypedArrayBuffer(LEPUSContext* ctx, LEPUSValueConst* data,
                                   size_t* out_len);
 
 /**
@@ -940,8 +924,7 @@ JSVoid* HAKO_CopyTypedArrayBuffer(LEPUSContext* ctx,
  * @tsparam name CString
  * @tsreturn JSValuePointer
  */
-LEPUSValue* HAKO_NewFunction(LEPUSContext* ctx,
-                             uint32_t func_id,
+LEPUSValue* HAKO_NewFunction(LEPUSContext* ctx, uint32_t func_id,
                              CString* name);
 
 /**
@@ -961,10 +944,8 @@ LEPUSValue* HAKO_NewFunction(LEPUSContext* ctx,
  * @tsparam argv_ptrs number
  * @tsreturn JSValuePointer
  */
-LEPUSValue* HAKO_Call(LEPUSContext* ctx,
-                      LEPUSValueConst* func_obj,
-                      LEPUSValueConst* this_obj,
-                      int argc,
+LEPUSValue* HAKO_Call(LEPUSContext* ctx, LEPUSValueConst* func_obj,
+                      LEPUSValueConst* this_obj, int argc,
                       LEPUSValueConst** argv_ptrs);
 
 /**
@@ -1000,12 +981,9 @@ LEPUSValueConst* HAKO_ArgvGetJSValueConstPointer(LEPUSValueConst* argv,
  * @tsparam eval_flags number
  * @tsreturn JSValuePointer
  */
-LEPUSValue* HAKO_Eval(LEPUSContext* ctx,
-                      BorrowedHeapChar* js_code,
-                      size_t js_code_length,
-                      BorrowedHeapChar* filename,
-                      LEPUS_BOOL detect_module,
-                      EvalFlags eval_flags);
+LEPUSValue* HAKO_Eval(LEPUSContext* ctx, BorrowedHeapChar* js_code,
+                      size_t js_code_length, BorrowedHeapChar* filename,
+                      LEPUS_BOOL detect_module, EvalFlags eval_flags);
 
 /**
  * @brief Creates a new promise capability
@@ -1215,14 +1193,12 @@ LEPUSValue* HAKO_NewDate(LEPUSContext* ctx, double time);
  * @brief Gets the class ID of a value
  * @category Value Operations
  *
- * @param ctx Context to use
  * @param val Value to get class ID from
  * @return LEPUSClassID - Class ID of the value (0 if not a class)
- * @tsparam ctx JSContextPointer
  * @tsparam val JSValueConstPointer
  * @tsreturn number
  */
-LEPUSClassID HAKO_GetClassID(LEPUSContext* ctx, LEPUSValueConst* val);
+LEPUSClassID HAKO_GetClassID(LEPUSValueConst* val);
 
 /**
  * @brief Checks if a value is an instance of a class
@@ -1237,8 +1213,7 @@ LEPUSClassID HAKO_GetClassID(LEPUSContext* ctx, LEPUSValueConst* val);
  * @tsparam obj JSValueConstPointer
  * @tsreturn LEPUS_BOOL
  */
-LEPUS_BOOL HAKO_IsInstanceOf(LEPUSContext* ctx,
-                             LEPUSValueConst* val,
+LEPUS_BOOL HAKO_IsInstanceOf(LEPUSContext* ctx, LEPUSValueConst* val,
                              LEPUSValueConst* obj);
 
 /**
@@ -1263,8 +1238,7 @@ HakoBuildInfo* HAKO_BuildInfo();
  * @tsparam opaque number
  * @tsreturn void
  */
-void HAKO_EnableProfileCalls(LEPUSRuntime* rt,
-                             uint32_t sampling,
+void HAKO_EnableProfileCalls(LEPUSRuntime* rt, uint32_t sampling,
                              JSVoid* opaque);
 
 /**
@@ -1291,12 +1265,10 @@ void HAKO_EnableProfileCalls(LEPUSRuntime* rt,
  * @tsparam out_bytecode_length number
  * @tsreturn number
  */
-JSVoid* HAKO_CompileToByteCode(LEPUSContext* ctx,
-                               BorrowedHeapChar* js_code,
+JSVoid* HAKO_CompileToByteCode(LEPUSContext* ctx, BorrowedHeapChar* js_code,
                                size_t js_code_length,
                                BorrowedHeapChar* filename,
-                               LEPUS_BOOL detect_module,
-                               EvalFlags flags,
+                               LEPUS_BOOL detect_module, EvalFlags flags,
                                size_t* out_bytecode_length);
 
 /**
@@ -1316,10 +1288,8 @@ JSVoid* HAKO_CompileToByteCode(LEPUSContext* ctx,
  * @tsparam load_only number
  * @tsreturn JSValuePointer
  */
-LEPUSValue* HAKO_EvalByteCode(LEPUSContext* ctx,
-                              JSVoid* bytecode_buffer,
-                              size_t bytecode_length,
-                              LEPUS_BOOL load_only);
+LEPUSValue* HAKO_EvalByteCode(LEPUSContext* ctx, JSVoid* bytecode_buffer,
+                              size_t bytecode_length, LEPUS_BOOL load_only);
 
 /**
  * @brief Creates a new C module
@@ -1347,8 +1317,7 @@ LEPUSModuleDef* HAKO_NewCModule(LEPUSContext* ctx, CString* name_str);
  * @tsparam export_name CString
  * @tsreturn number
  */
-int HAKO_AddModuleExport(LEPUSContext* ctx,
-                         LEPUSModuleDef* m,
+int HAKO_AddModuleExport(LEPUSContext* ctx, LEPUSModuleDef* m,
                          CString* export_name);
 
 /**
@@ -1366,14 +1335,12 @@ int HAKO_AddModuleExport(LEPUSContext* ctx,
  * @tsparam val JSValueConstPointer
  * @tsreturn number
  */
-int HAKO_SetModuleExport(LEPUSContext* ctx,
-                         LEPUSModuleDef* m,
-                         CString* export_name,
-                         LEPUSValueConst* val);
+int HAKO_SetModuleExport(LEPUSContext* ctx, LEPUSModuleDef* m,
+                         CString* export_name, LEPUSValueConst* val);
 /**
  * @brief Gets the name of a module
  * @category Module Creation
- * 
+ *
  * @param ctx Context to use
  * @param m Module to get name from
  * @return CString* - Module name string
@@ -1382,6 +1349,121 @@ int HAKO_SetModuleExport(LEPUSContext* ctx,
  * @tsreturn CString
  */
 CString* HAKO_GetModuleName(LEPUSContext* ctx, LEPUSModuleDef* m);
+
+/**
+ * @brief Allocates a new class ID
+ * @category Class Management
+ *
+ * @param pclass_id Pointer to store the allocated class ID
+ * @return LEPUSClassID - The allocated class ID
+ * @tsparam pclass_id number
+ * @tsreturn number
+ */
+LEPUSClassID HAKO_NewClassID(LEPUSClassID* pclass_id);
+
+/**
+ * @brief Creates a new class with constructor and optional finalizer
+ * @category Class Management
+ *
+ * @param ctx Context to create class in
+ * @param class_id Class ID to use
+ * @param class_name Name of the class
+ * @param has_finalizer Whether this class needs a finalizer
+ * @return LEPUSValue* - Constructor function for the class
+ * @tsparam ctx JSContextPointer
+ * @tsparam class_id number
+ * @tsparam class_name CString
+ * @tsparam has_finalizer LEPUS_BOOL
+ * @tsreturn JSValuePointer
+ */
+LEPUSValue* HAKO_NewClass(LEPUSContext* ctx, LEPUSClassID class_id,
+                          CString* class_name, LEPUS_BOOL has_finalizer);
+
+/**
+ * @brief Sets the prototype for a class
+ * @category Class Management
+ *
+ * @param ctx Context to use
+ * @param class_id Class ID
+ * @param proto Prototype object
+ * @tsparam ctx JSContextPointer
+ * @tsparam class_id number
+ * @tsparam proto JSValueConstPointer
+ */
+void HAKO_SetClassProto(LEPUSContext* ctx, LEPUSClassID class_id,
+                        LEPUSValueConst* proto);
+
+/**
+ * @brief Links constructor and prototype
+ * @category Class Management
+ *
+ * @param ctx Context to use
+ * @param ctor Constructor function
+ * @param proto Prototype object
+ * @tsparam ctx JSContextPointer
+ * @tsparam ctor JSValueConstPointer
+ * @tsparam proto JSValueConstPointer
+ */
+void HAKO_SetConstructor(LEPUSContext* ctx, LEPUSValueConst* ctor,
+                         LEPUSValueConst* proto);
+
+/**
+ * @brief Creates a new instance of a class
+ * @category Class Management
+ *
+ * @param ctx Context to use
+ * @param class_id Class ID
+ * @return LEPUSValue* - New class instance
+ * @tsparam ctx JSContextPointer
+ * @tsparam class_id number
+ * @tsreturn JSValuePointer
+ */
+LEPUSValue* HAKO_NewObjectClass(LEPUSContext* ctx, LEPUSClassID class_id);
+
+/**
+ * @brief Sets opaque data on an object
+ * @category Class Management
+ *
+ * @param obj Object to set data on
+ * @param opaque Opaque data pointer
+ * @tsparam obj JSValueConstPointer
+ * @tsparam opaque number
+ */
+void HAKO_SetOpaque(LEPUSValueConst* obj, JSVoid* opaque);
+
+/**
+ * @brief Gets opaque data from an object
+ * @category Class Management
+ *
+ * @param ctx Context to use
+ * @param obj Object to get data from
+ * @param class_id Expected class ID for type safety
+ * @return JSVoid* - Opaque data pointer, NULL if wrong class or no data
+ * @tsparam ctx JSContextPointer
+ * @tsparam obj JSValueConstPointer
+ * @tsparam class_id number
+ * @tsreturn number
+ */
+JSVoid* HAKO_GetOpaque(LEPUSContext* ctx, LEPUSValueConst* obj,
+                       LEPUSClassID class_id);
+
+/**
+ * @brief Creates a new object with a prototype and class ID
+ * @category Class Management
+ *
+ * @param ctx Context to create in
+ * @param proto Prototype object
+ * @param class_id Class ID for the new object
+ * @return LEPUSValue* - New object with specified prototype and class ID
+ * @tsparam ctx JSContextPointer
+ * @tsparam proto JSValueConstPointer
+ * @tsparam class_id number
+ * @tsreturn JSValuePointer
+ */
+LEPUSValue* HAKO_NewObjectProtoClass(LEPUSContext* ctx, LEPUSValueConst* proto,
+                                     LEPUSClassID class_id);
+
+LEPUS_BOOL HAKO_IsRegisteredClass(LEPUSRuntime* rt, LEPUSClassID class_id);
 
 #ifdef HAKO_DEBUG_MODE
 #define HAKO_LOG(msg) hako_log(msg)

@@ -29,7 +29,6 @@ import type { Container } from "@hako/runtime/container";
 import { ValueFactory } from "@hako/vm/value-factory";
 import { HakoDeferredPromise } from "@hako/helpers/deferred-promise";
 import { VMIterator } from "@hako/helpers/iterator-helper";
-import { CModuleBuilder } from "@hako/vm/cmodule";
 
 /**
  * Represents a JavaScript execution context within the PrimJS virtual machine.
@@ -425,7 +424,6 @@ export class VMContext implements Disposable {
       result.error.dispose();
       throw error;
     }
-
     return result.value;
   }
 
@@ -1076,17 +1074,6 @@ export class VMContext implements Disposable {
     }
 
     return new VMValue(this, resultPtr, ValueLifecycle.Owned);
-  }
-
-  /**
-  * Creates a new C module builder.
-  * 
-  * @param name - Name of the module
-  * @param context - Optional context to use (defaults to system context)
-  * @returns A new CModuleBuilder instance
-  */
-  createCModule(name: string): CModuleBuilder {
-    return new CModuleBuilder(this, name);
   }
 
   /**

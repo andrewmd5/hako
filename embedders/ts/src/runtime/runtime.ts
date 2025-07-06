@@ -23,6 +23,7 @@ import {
 } from "@hako/etc/types";
 import { VMValue } from "@hako/vm/value";
 import { DisposableResult, Scope } from "@hako/mem/lifetime";
+import { CModuleBuilder, CModuleInitializer } from "@hako/vm/cmodule";
 
 /**
  * The HakoRuntime class represents a JavaScript execution environment.
@@ -92,14 +93,16 @@ export class HakoRuntime implements Disposable {
     return this.rtPtr;
   }
 
+
   /**
-   * Sets the module initialization handler for this runtime.
-   * @param handler - The function to call when a module is initialized.
-   *                  This function receives a CModuleInitializer instance.
-   *                  If null, the module initialization handler is removed.
+   * Creates a C module with inline handler registration
    */
-  setModuleInitHandler(handler: ModuleInitFunction | null): void {
-    this.container.callbacks.setModuleInitHandler(handler);
+  createCModule(
+    name: string,
+    handler: (initializer: CModuleInitializer) => number | void,
+    ctx: VMContext | undefined = undefined
+  ): CModuleBuilder {
+    return new CModuleBuilder(ctx ? ctx : this.getSystemContext(), name, handler);
   }
 
   /**

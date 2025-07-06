@@ -1,0 +1,69 @@
+From c39bdf8f4ae7a50c8f2a712162e3a4be88423599 Mon Sep 17 00:00:00 2001
+From: Andrew Sampson <andrew@Andrews-Mac-Studio.local>
+Date: Sun, 6 Jul 2025 14:57:03 +0900
+Subject: [PATCH] fix: class id stuff
+
+Exposes LEPUS_SetConstructor and fixes GetClassId so it doesn't require a LEPUSContext
+---
+ src/interpreter/quickjs/include/quickjs.h | 5 ++++-
+ src/interpreter/quickjs/source/quickjs.cc | 7 ++++++-
+ 2 files changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/src/interpreter/quickjs/include/quickjs.h b/src/interpreter/quickjs/include/quickjs.h
+index 3f2c53b..a8f2790 100644
+--- a/src/interpreter/quickjs/include/quickjs.h
++++ b/src/interpreter/quickjs/include/quickjs.h
+@@ -752,6 +752,8 @@ LEPUSRuntime *LEPUS_GetRuntime(LEPUSContext *ctx);
+ void LEPUS_SetMaxStackSize(LEPUSContext *ctx, size_t stack_size);
+ void LEPUS_SetClassProto(LEPUSContext *ctx, LEPUSClassID class_id,
+                          LEPUSValue obj);
++void LEPUS_SetConstructor(LEPUSContext *ctx, LEPUSValueConst func_obj,
++                        LEPUSValueConst proto);
+ LEPUSValue LEPUS_GetClassProto(LEPUSContext *ctx, LEPUSClassID class_id);
+ int LEPUS_MoveUnhandledRejectionToException(LEPUSContext *ctx);
+ size_t LEPUS_GetHeapSize(LEPUSRuntime *rt);
+@@ -903,6 +905,7 @@ int LEPUS_NewClass(LEPUSRuntime *rt, LEPUSClassID class_id,
+                    const LEPUSClassDef *class_def);
+ int LEPUS_IsRegisteredClass(LEPUSRuntime *rt, LEPUSClassID class_id);
+ 
++
+ /* value handling */
+ 
+ static lepus_force_inline LEPUSValue LEPUS_NewBool(LEPUSContext *ctx,
+@@ -1398,7 +1401,7 @@ JSAtom LEPUS_ValueToAtom(LEPUSContext *ctx, LEPUSValueConst val);
+ 
+ const uint16_t *LEPUS_GetStringChars(LEPUSContext *, LEPUSValueConst);
+ uint32_t LEPUS_GetStringLength(LEPUSContext *, LEPUSValueConst);
+-LEPUSClassID LEPUS_GetClassID(LEPUSContext *, LEPUSValueConst);
++LEPUSClassID LEPUS_GetClassID(LEPUSValueConst);
+ LEPUSValue LEPUS_NewArrayWithValue(LEPUSContext *, uint32_t length,
+                                    LEPUSValueConst *values);
+ LEPUSValue LEPUS_NewTypedArray(LEPUSContext *, uint32_t length, LEPUSClassID);
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 85cb484..2d2ee25 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -36358,6 +36358,11 @@ QJS_STATIC void JS_SetConstructor(LEPUSContext *ctx, LEPUSValueConst func_obj,
+                      LEPUS_PROP_WRITABLE | LEPUS_PROP_CONFIGURABLE);
+ }
+ 
++void LEPUS_SetConstructor(LEPUSContext *ctx, LEPUSValueConst func_obj,
++                        LEPUSValueConst proto) {
++  JS_SetConstructor(ctx, func_obj, proto);
++}
++
+ QJS_STATIC void JS_NewGlobalCConstructor2(LEPUSContext *ctx,
+                                           LEPUSValue func_obj, const char *name,
+                                           LEPUSValueConst proto) {
+@@ -57521,7 +57526,7 @@ const uint16_t *LEPUS_GetStringChars(LEPUSContext *ctx, LEPUSValueConst str) {
+   return s->u.str16;
+ }
+ 
+-LEPUSClassID LEPUS_GetClassID(LEPUSContext *ctx, LEPUSValueConst obj) {
++LEPUSClassID LEPUS_GetClassID(LEPUSValueConst obj) {
+   if (LEPUS_VALUE_IS_NOT_OBJECT(obj)) return LEPUS_INVALID_CLASS_ID;
+ 
+   LEPUSObject *p = LEPUS_VALUE_GET_OBJ(obj);
+-- 
+2.45.2
+

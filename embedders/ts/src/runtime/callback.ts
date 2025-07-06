@@ -25,9 +25,15 @@ import type {
   JSVoid,
   ModuleResolverFunction,
   ModuleInitFunction,
+  ClassConstructorHandler,
+  ClassFinalizerHandler,
 } from "@hako/etc/types";
 import { VMValue } from "@hako/vm/value";
 import { CModuleInitializer } from "@hako/vm/cmodule";
+
+const HAKO_MODULE_SOURCE_STRING = 0;
+const HAKO_MODULE_SOURCE_PRECOMPILED = 1;
+const HAKO_MODULE_SOURCE_ERROR = 2;
 
 /**
  * Manages bidirectional callbacks between the host JavaScript environment and the PrimJS VM.
@@ -42,86 +48,30 @@ import { CModuleInitializer } from "@hako/vm/cmodule";
  * WebAssembly pointers to enable seamless interoperability.
  */
 export class CallbackManager {
-  /**
-   * Reference to the WebAssembly exports object.
-   * @private
-   */
   // biome-ignore lint/style/noNonNullAssertion: Will be initialized in setExports
   private exports: HakoExports = null!;
-
-  /**
-   * Reference to the memory manager for handling WebAssembly memory operations.
-   * @private
-   */
   private memory: MemoryManager;
 
-  // Callback registries
-  /**
-   * Map of function IDs to host callback functions.
-   * @private
-   */
   private hostFunctions: Map<number, HostCallbackFunction<VMValue>> = new Map();
+  private moduleInitHandlers: Map<string, ModuleInitFunction> = new Map();
+  private classConstructors: Map<number, ClassConstructorHandler> = new Map();
+  private classFinalizers: Map<number, ClassFinalizerHandler> = new Map();
 
   /**
    * Counter for generating unique function IDs.
    * Starts at -32768 to avoid conflicts with any internal IDs.
-   * @private
    */
   private nextFunctionId = -32768;
 
-  /**
-   * Function for loading module source code by name.
-   * @private
-   */
   private moduleLoader: ModuleLoaderFunction | null = null;
-
-  /**
-   * Function for normalizing module specifiers into absolute module names.
-   * @private
-   */
   private moduleNormalizer: ModuleNormalizerFunction | null = null;
-
-  /**
-   * Function for resolving module names (import.meta.resolve).
-   * @private
-   */
   private moduleResolver: ModuleResolverFunction | null = null;
-
-  /**
-  * Function for initializing C modules.
-  * @private
-  */
-  private moduleInitHandler: ModuleInitFunction | null = null;
-
-  /**
-   * Function for handling interrupts during long-running operations.
-   * @private
-   */
   private interruptHandler: InterruptHandler | null = null;
-
-  /**
-   * Handler for function profiling events
-   * @private
-   */
   private profilerHandler: ProfilerEventHandler | null = null;
 
-  /**
-   * Registry mapping context pointers to their corresponding VMContext objects.
-   * @private
-   */
   private contextRegistry: Map<number, VMContext> = new Map();
-
-  /**
-   * Registry mapping runtime pointers to their corresponding HakoRuntime objects.
-   * @private
-   */
   private runtimeRegistry: Map<number, HakoRuntime> = new Map();
 
-  /**
-   * Creates a new CallbackManager instance.
-   *
-   * @param memory - The memory manager to use for WebAssembly memory operations
-   */
   constructor(memory: MemoryManager) {
     this.memory = memory;
   }
@@ -129,8 +79,6 @@ export class CallbackManager {
   /**
    * Sets the WebAssembly exports object after module instantiation.
    * Must be called before using other methods.
-   *
-   * @param exports - The PrimJS WebAssembly exports object
    */
   setExports(exports: HakoExports): void {
     this.exports = exports;
@@ -141,13 +89,10 @@ export class CallbackManager {
    *
    * This provides the callback functions that the WebAssembly module will call
    * to communicate with the host JavaScript environment.
-   *
-   * @returns WebAssembly import object with callback functions
    */
   getImports(): Record<string, unknown> {
     return {
       hako: {
-        // Host function call handler
         call_function: (
           ctxPtr: number,
           thisPtr: number,
@@ -164,7 +109,6 @@ export class CallbackManager {
           );
         },
 
-        // Interrupt handler
         interrupt_handler: (
           rtPtr: number,
           ctxPtr: number,
@@ -173,8 +117,7 @@ export class CallbackManager {
           return this.handleInterrupt(rtPtr, ctxPtr, opaque) ? 1 : 0;
         },
 
-        // Module source loader
-        load_module_source: (
+        load_module: (
           rtPtr: number,
           ctxPtr: number,
           moduleNamePtr: number,
@@ -183,7 +126,6 @@ export class CallbackManager {
           return this.handleModuleLoad(rtPtr, ctxPtr, moduleNamePtr);
         },
 
-        // Module name normalizer
         normalize_module: (
           rtPtr: number,
           ctxPtr: number,
@@ -205,7 +147,6 @@ export class CallbackManager {
           currentModulePtr: number,
           _opaque: number
         ): number => {
-          // This is an alias for load_module_source, PrimJS uses this for module resolution
           return this.handleModuleResolve(
             rtPtr,
             ctxPtr,
@@ -234,6 +175,23 @@ export class CallbackManager {
         ): number => {
           return this.handleModuleInit(ctxPtr, modulePtr);
         },
+        class_constructor: (
+          ctxPtr: number,
+          newTargetPtr: number,
+          argc: number,
+          argvPtr: number,
+          classId: number
+        ): number => {
+          return this.handleClassConstructor(ctxPtr, newTargetPtr, argc, argvPtr, classId);
+        },
+
+        class_finalizer: (
+          rtPtr: number,
+          opaque: number,
+          classId: number
+        ): void => {
+          this.handleClassFinalizer(rtPtr, opaque, classId);
+        },
       },
     };
   }
@@ -243,9 +201,6 @@ export class CallbackManager {
    *
    * This associates a JavaScript VMContext object with its WebAssembly pointer
    * to enable lookups in either direction.
-   *
-   * @param ctxPtr - The WebAssembly pointer to the context
-   * @param ctx - The VMContext object to register
    */
   registerContext(ctxPtr: JSContextPointer, ctx: VMContext): void {
     this.contextRegistry.set(ctxPtr, ctx);
@@ -253,21 +208,20 @@ export class CallbackManager {
 
   /**
    * Unregisters a context from the registry.
-   *
    * Call this when a context is disposed to prevent memory leaks.
-   *
-   * @param ctxPtr - The WebAssembly pointer to the context
    */
   unregisterContext(ctxPtr: JSContextPointer): void {
     this.contextRegistry.delete(ctxPtr);
   }
 
-  /**
-   * Gets a VMContext object from its WebAssembly pointer.
-   *
-   * @param ctxPtr - The WebAssembly pointer to the context
-   * @returns The corresponding VMContext object, or undefined if not found
-   */
+  unregisterClassConstructor(classId: number): void {
+    this.classConstructors.delete(classId);
+  }
+
+  unregisterClassFinalizer(classId: number): void {
+    this.classFinalizers.delete(classId);
+  }
+
   getContext(ctxPtr: JSContextPointer): VMContext | undefined {
     return this.contextRegistry.get(ctxPtr);
   }
@@ -277,9 +231,6 @@ export class CallbackManager {
    *
    * This associates a JavaScript HakoRuntime object with its WebAssembly pointer
    * to enable lookups in either direction.
-   *
-   * @param rtPtr - The WebAssembly pointer to the runtime
-   * @param runtime - The HakoRuntime object to register
    */
   registerRuntime(rtPtr: JSRuntimePointer, runtime: HakoRuntime): void {
     this.runtimeRegistry.set(rtPtr, runtime);
@@ -287,30 +238,34 @@ export class CallbackManager {
 
   /**
    * Unregisters a runtime from the registry.
-   *
    * Call this when a runtime is disposed to prevent memory leaks.
-   *
-   * @param rtPtr - The WebAssembly pointer to the runtime
    */
   unregisterRuntime(rtPtr: JSRuntimePointer): void {
     this.runtimeRegistry.delete(rtPtr);
   }
 
-  /**
-   * Gets a HakoRuntime object from its WebAssembly pointer.
-   *
-   * @param rtPtr - The WebAssembly pointer to the runtime
-   * @returns The corresponding HakoRuntime object, or undefined if not found
-   */
+  registerModuleInitHandler(moduleName: string, handler: ModuleInitFunction): void {
+    this.moduleInitHandlers.set(moduleName, handler);
+  }
+
+  unregisterModuleInitHandler(moduleName: string): void {
+    this.moduleInitHandlers.delete(moduleName);
+  }
+
+  registerClassConstructor(classId: number, handler: ClassConstructorHandler): void {
+    this.classConstructors.set(classId, handler);
+  }
+
+  registerClassFinalizer(classId: number, handler: ClassFinalizerHandler): void {
+    this.classFinalizers.set(classId, handler);
+  }
+
   getRuntime(rtPtr: JSRuntimePointer): HakoRuntime | undefined {
     return this.runtimeRegistry.get(rtPtr);
   }
 
   /**
    * Registers a host JavaScript function that can be called from PrimJS.
-   *
-   * @param callback - The JavaScript function to register
-   * @returns A function ID that can be used to create a PrimJS function
    */
   registerHostFunction(callback: HostCallbackFunction<VMValue>): number {
     const id = this.nextFunctionId++;
@@ -318,11 +273,6 @@ export class CallbackManager {
     return id;
   }
 
-  /**
-   * Unregisters a previously registered host function.
-   *
-   * @param id - The function ID returned by registerHostFunction
-   */
   unregisterHostFunction(id: number): void {
     this.hostFunctions.delete(id);
   }
@@ -332,12 +282,6 @@ export class CallbackManager {
    *
    * This creates a JavaScript function in the PrimJS environment that,
    * when called, will execute the provided host callback function.
-   *
-   * @param ctx - The PrimJS context pointer
-   * @param callback - The host function to call
-   * @param name - Function name for debugging and error messages
-   * @returns Pointer to the new function JSValue
-   * @throws Error if exports are not set
    */
   newFunction(
     ctx: JSContextPointer,
@@ -360,8 +304,6 @@ export class CallbackManager {
    *
    * The module loader is called when PrimJS needs to load a module by name.
    * It should return the module's source code as a string, or null if not found.
-   *
-   * @param loader - The module loader function or null to disable module loading
    */
   setModuleLoader(loader: ModuleLoaderFunction | null): void {
     this.moduleLoader = loader;
@@ -372,8 +314,6 @@ export class CallbackManager {
    *
    * The module normalizer is called to resolve relative module specifiers
    * into absolute module names.
-   *
-   * @param normalizer - The module normalizer function or null to use default normalization
    */
   setModuleNormalizer(normalizer: ModuleNormalizerFunction | null): void {
     this.moduleNormalizer = normalizer;
@@ -390,8 +330,6 @@ export class CallbackManager {
    *
    * The interrupt handler is called periodically during PrimJS execution
    * and can terminate execution by returning true.
-   *
-   * @param handler - The interrupt handler function or null to disable interrupts
    */
   setInterruptHandler(handler: InterruptHandler | null): void {
     this.interruptHandler = handler;
@@ -402,30 +340,13 @@ export class CallbackManager {
    *
    * This registers the runtime object for later lookup and enables
    * callback functionality for the runtime.
-   *
-   * @param rtPtr - The WebAssembly pointer to the runtime
-   * @param runtime - The HakoRuntime object
    */
   setRuntimeCallbacks(rtPtr: JSRuntimePointer, runtime: HakoRuntime): void {
     this.registerRuntime(rtPtr, runtime);
   }
 
-  /**
-   * Sets the profiler event handler for function profiling.
-   *
-   * @param handler - The profiler event handler or null to disable profiling
-   */
   setProfilerHandler(handler: ProfilerEventHandler | null): void {
     this.profilerHandler = handler;
-  }
-
-  /**
-  * Sets the module initialization handler for C modules.
-  *
-  * @param handler - The module initialization handler or null to disable
-  */
-  setModuleInitHandler(handler: ModuleInitFunction | null): void {
-    this.moduleInitHandler = handler;
   }
 
   /**
@@ -433,13 +354,6 @@ export class CallbackManager {
    *
    * This is called by the WebAssembly module when a host function
    * registered with registerHostFunction is invoked from PrimJS.
-   *
-   * @param ctxPtr - The PrimJS context pointer
-   * @param thisPtr - The 'this' value pointer for the function call
-   * @param argc - Number of arguments
-   * @param argvPtr - Pointer to the argument array
-   * @param funcId - Function ID from registerHostFunction
-   * @returns Pointer to the result JSValue
    */
   handleHostFunctionCall(
     ctxPtr: JSContextPointer,
@@ -450,14 +364,11 @@ export class CallbackManager {
   ): number {
     const callback = this.hostFunctions.get(funcId);
     if (!callback) {
-      console.error(`No callback registered for function ID ${funcId}`);
       return this.exports.HAKO_GetUndefined();
     }
 
-    // Get the context object
     const ctx = this.getContext(ctxPtr);
     if (!ctx) {
-      console.error(`No context registered for pointer ${ctxPtr}`);
       return this.exports.HAKO_GetUndefined();
     }
 
@@ -473,62 +384,51 @@ export class CallbackManager {
       }
 
       try {
-        // Call the callback function and handle its result
         const result = yield* awaited(callback.apply(thisHandle, argHandles));
 
         if (result) {
           if (result instanceof VMValue) {
-            // Duplicate the result handle and dispose the original
             const duplicatedHandle = this.exports.HAKO_DupValuePointer(
               ctxPtr,
               result.getHandle()
             );
-            result.dispose(); // Dispose the original result
+            result.dispose();
             return duplicatedHandle;
           }
 
           if (DisposableResult.is(result)) {
             if (result.error) {
-              console.error("Error in callback:", result.error);
-              // Dispose the result and handle error
               result.dispose();
               try {
-                result.unwrap(); // This will throw
+                result.unwrap();
               } catch (e) {
-                // Convert the error to a PrimJS exception and return it
                 using errorHandle = ctx.newValue(e as Error);
                 return this.exports.HAKO_Throw(ctxPtr, errorHandle.getHandle());
               }
               return this.exports.HAKO_GetUndefined();
             }
 
-            // Unwrap the result and dispose the wrapper
             const unwrapped = result.unwrap();
-            result.dispose(); // Dispose the DisposableResult wrapper
+            result.dispose();
 
             const duplicatedHandle = this.exports.HAKO_DupValuePointer(
               ctxPtr,
               unwrapped.getHandle()
             );
-            unwrapped.dispose(); // Dispose the unwrapped value
+            unwrapped.dispose();
             return duplicatedHandle;
           }
 
-          // This should never happen based on your comment, but handle gracefully
-          console.warn("Unexpected result type in handleHostFunctionCall:", typeof result);
           return this.exports.HAKO_GetUndefined();
         }
 
         return this.exports.HAKO_GetUndefined();
 
       } catch (error) {
-        // FIXED: Use 'using' for proper disposal of error handle
         try {
           using errorHandle = ctx.newValue(error as Error);
           return this.exports.HAKO_Throw(ctxPtr, errorHandle.getHandle());
         } catch (conversionError) {
-          // If we can't convert the error, log it and return undefined
-          console.error("Failed to convert error to PrimJS:", conversionError);
           return this.exports.HAKO_GetUndefined();
         }
       }
@@ -536,39 +436,120 @@ export class CallbackManager {
   }
 
   /**
+   * Creates a HakoModuleSource struct for source code
+   */
+  private createModuleSourceString(ctxPtr: JSContextPointer, sourceCode: string): number {
+    // Allocate memory for the HakoModuleSource struct
+    // struct layout: 4 bytes (enum) + 4 bytes (union pointer) = 8 bytes
+    const structSize = 8;
+    const structPtr = this.exports.HAKO_Malloc(ctxPtr, structSize);
+    if (structPtr === 0) {
+      return 0;
+    }
+
+    // Allocate and copy the source code string
+    const sourcePtr = this.memory.allocateString(ctxPtr, sourceCode);
+    if (sourcePtr === 0) {
+      this.exports.HAKO_Free(ctxPtr, structPtr);
+      return 0;
+    }
+
+    // Write the struct data
+    const exports = this.exports;
+    const view = new DataView(exports.memory.buffer);
+    
+    // Write type (enum value) at offset 0
+    view.setUint32(structPtr, HAKO_MODULE_SOURCE_STRING, true);
+    
+    // Write union data (source_code pointer) at offset 4
+    view.setUint32(structPtr + 4, sourcePtr, true);
+
+    return structPtr;
+  }
+
+  /**
+   * Creates a HakoModuleSource struct for precompiled module
+   */
+  private createModuleSourcePrecompiled(ctxPtr: JSContextPointer, moduleDefPtr: number): number {
+    // Allocate memory for the HakoModuleSource struct
+    const structSize = 8;
+    const structPtr = this.exports.HAKO_Malloc(ctxPtr, structSize);
+    if (structPtr === 0) {
+      return 0;
+    }
+
+    // Write the struct data
+    const exports = this.exports;
+    const view = new DataView(exports.memory.buffer);
+    
+    // Write type (enum value) at offset 0
+    view.setUint32(structPtr, HAKO_MODULE_SOURCE_PRECOMPILED, true);
+    
+    // Write union data (module_def pointer) at offset 4
+    view.setUint32(structPtr + 4, moduleDefPtr, true);
+
+    return structPtr;
+  }
+
+  /**
+   * Creates a HakoModuleSource struct for error case
+   */
+  private createModuleSourceError(ctxPtr: JSContextPointer): number {
+    // Allocate memory for the HakoModuleSource struct
+    const structSize = 8;
+    const structPtr = this.exports.HAKO_Malloc(ctxPtr, structSize);
+    if (structPtr === 0) {
+      return 0;
+    }
+
+    // Write the struct data
+    const exports = this.exports;
+    const view = new DataView(exports.memory.buffer);
+    
+    // Write type (enum value) at offset 0
+    view.setUint32(structPtr, HAKO_MODULE_SOURCE_ERROR, true);
+    
+    // Write union data (NULL pointer) at offset 4
+    view.setUint32(structPtr + 4, 0, true);
+
+    return structPtr;
+  }
+
+  /**
    * Handles a module load request from PrimJS.
    *
    * This is called by the WebAssembly module when PrimJS needs to load
    * a module during import or dynamic import operations.
-   *
-   * @param _rtPtr - The PrimJS runtime pointer
-   * @param _ctxPtr - The PrimJS context pointer
-   * @param moduleNamePtr - Pointer to the module name string
-   * @returns Pointer to the module source string, or 0 if not found
    */
   handleModuleLoad(
     _rtPtr: JSRuntimePointer,
-    _ctxPtr: JSContextPointer,
+    ctxPtr: JSContextPointer,
     moduleNamePtr: number
   ): number {
     return Scope.withScopeMaybeAsync(this, function* (awaited, _scope) {
       if (!this.moduleLoader) {
-        console.error("No module loader registered");
-        return 0;
+        return this.createModuleSourceError(ctxPtr);
       }
 
-      // Read the module name and call the module loader
       const moduleName = this.memory.readString(moduleNamePtr);
-      const moduleSource = yield* awaited(this.moduleLoader(moduleName));
+      const moduleResult = yield* awaited(this.moduleLoader(moduleName));
 
-      if (moduleSource === null) {
-        console.error(`Module ${moduleName} not found`);
-        return 0;
+      if (moduleResult === null) {
+        return this.createModuleSourceError(ctxPtr);
       }
 
-      // Allocate the source code string in WebAssembly memory
-      return this.memory.allocateString(_ctxPtr, moduleSource);
-    }) as JSValuePointer;
+      switch (moduleResult.type) {
+        case 'source':
+          return this.createModuleSourceString(ctxPtr, moduleResult.data);
+        
+        case 'precompiled':
+          return this.createModuleSourcePrecompiled(ctxPtr, moduleResult.data);
+        
+        case 'error':
+        default:
+          return this.createModuleSourceError(ctxPtr);
+      }
+    }) as number;
   }
 
   handleModuleResolve(
@@ -579,15 +560,13 @@ export class CallbackManager {
     _opaque: JSVoid
   ): number {
     if (!this.moduleResolver) {
-      console.error("No module resolver registered");
       return 0;
     }
 
     if (moduleNamePtr === 0) {
-      return 0; // Invalid module name pointer
+      return 0;
     }
 
-    // Read the module name and call the module loader
     const moduleName = this.memory.readString(moduleNamePtr);
     let currentModuleName;
     if (currentModulePtr !== 0) {
@@ -596,10 +575,9 @@ export class CallbackManager {
 
     const resolvedPath = this.moduleResolver(moduleName, currentModuleName);
     if (!resolvedPath) {
-      console.error(`Module ${moduleName} not found`);
       return 0;
     }
-    // Allocate the source code string in WebAssembly memory
+
     return this.memory.allocateString(_ctxPtr, resolvedPath);
   }
 
@@ -608,12 +586,6 @@ export class CallbackManager {
    *
    * This is called by the WebAssembly module when PrimJS needs to
    * resolve a relative module specifier against a base module.
-   *
-   * @param _rtPtr - The PrimJS runtime pointer
-   * @param _ctxPtr - The PrimJS context pointer
-   * @param baseNamePtr - Pointer to the base module name string
-   * @param moduleNamePtr - Pointer to the module specifier string
-   * @returns Pointer to the normalized module name string
    */
   handleModuleNormalize(
     _rtPtr: JSRuntimePointer,
@@ -623,20 +595,16 @@ export class CallbackManager {
   ): number {
     return Scope.withScopeMaybeAsync(this, function* (awaited, _scope) {
       if (!this.moduleNormalizer) {
-        // Default normalization: just return the module name
         return moduleNamePtr;
       }
 
-      // Read the base name and module name
       const baseName = this.memory.readString(baseNamePtr);
       const moduleName = this.memory.readString(moduleNamePtr);
 
-      // Call the module normalizer
       const normalizedName = yield* awaited(
         this.moduleNormalizer(baseName, moduleName)
       );
 
-      // Allocate the normalized name in WebAssembly memory
       return this.memory.allocateString(_ctxPtr, normalizedName);
     }) as JSValuePointer;
   }
@@ -646,9 +614,6 @@ export class CallbackManager {
    *
    * This is called periodically during PrimJS execution to check
    * if execution should be interrupted.
-   *
-   * @param rtPtr - The PrimJS runtime pointer
-   * @returns True to interrupt execution, false to continue
    */
   handleInterrupt(
     rtPtr: JSRuntimePointer,
@@ -660,7 +625,6 @@ export class CallbackManager {
     }
 
     try {
-      // Get the runtime object
       const runtime = this.getRuntime(rtPtr);
       if (!runtime) {
         return true;
@@ -670,24 +634,13 @@ export class CallbackManager {
         return true;
       }
 
-      // Call the interrupt handler with the runtime object
       const shouldInterrupt = this.interruptHandler(runtime, ctx, opaque);
       return shouldInterrupt === true;
     } catch (error) {
-      console.error("Error in interrupt handler:", error);
       return false;
     }
   }
 
-  /**
-   * Handles a function profiling start event from PrimJS.
-   *
-   * This is called by the WebAssembly module when a profiled function starts.
-   *
-   * @param ctxPtr - The PrimJS context pointer
-   * @param funcNamePtr - Pointer to the function name string
-   * @param opaque - Opaque data pointer passed through to the handler
-   */
   handleProfileFunctionStart(
     ctxPtr: JSContextPointer,
     eventPtr: number,
@@ -702,22 +655,12 @@ export class CallbackManager {
     }
     try {
       const event = JSON.parse(this.memory.readString(eventPtr)) as TraceEvent;
-      // Call the handler
       this.profilerHandler.onFunctionStart(ctx, event, opaque);
     } catch (error) {
-      console.error("Error in profile function start handler:", error);
+      // Silent fail for profiling
     }
   }
 
-  /**
-   * Handles a function profiling end event from PrimJS.
-   *
-   * This is called by the WebAssembly module when a profiled function ends.
-   *
-   * @param ctxPtr - The PrimJS context pointer
-   * @param funcNamePtr - Pointer to the function name string
-   * @param opaque - Opaque data pointer passed through to the handler
-   */
   handleProfileFunctionEnd(
     ctxPtr: JSContextPointer,
     eventPtr: number,
@@ -732,10 +675,96 @@ export class CallbackManager {
     }
     try {
       const event = JSON.parse(this.memory.readString(eventPtr)) as TraceEvent;
-      // Call the handler
       this.profilerHandler.onFunctionEnd(ctx, event, opaque);
     } catch (error) {
-      console.error("Error in profile function end handler:", error);
+      // Silent fail for profiling
+    }
+  }
+
+  handleClassConstructor(
+    ctxPtr: number,
+    newTargetPtr: number,
+    argc: number,
+    argvPtr: number,
+    classId: number
+  ): number {
+    const handler = this.classConstructors.get(classId);
+    if (!handler) {
+      return this.exports.HAKO_GetUndefined();
+    }
+
+    const ctx = this.getContext(ctxPtr);
+    if (!ctx) {
+      return this.exports.HAKO_GetUndefined();
+    }
+
+    return Scope.withScopeMaybeAsync(this, function* (awaited, scope) {
+      const newTarget = scope.manage(ctx.borrowValue(newTargetPtr));
+
+      const args: VMValue[] = [];
+      for (let i = 0; i < argc; i++) {
+        const argPtr = this.exports.HAKO_ArgvGetJSValueConstPointer(argvPtr, i);
+        const arg = ctx.duplicateValue(argPtr);
+        args.push(scope.manage(arg));
+      }
+
+      try {
+        const result = yield* awaited(handler(ctx, newTarget, args, classId));
+
+        if (result && result instanceof VMValue) {
+          const duplicatedHandle = this.exports.HAKO_DupValuePointer(
+            ctxPtr,
+            result.getHandle()
+          );
+          result.dispose();
+          return duplicatedHandle;
+        }
+
+        return this.exports.HAKO_GetUndefined();
+
+      } catch (error) {
+        try {
+          using errorHandle = ctx.newValue(error as Error);
+          return this.exports.HAKO_Throw(ctxPtr, errorHandle.getHandle());
+        } catch (conversionError) {
+          return this.exports.HAKO_GetUndefined();
+        }
+      }
+    }) as number;
+  }
+
+  handleClassFinalizer(rtPtr: number, opaque: number, classId: number): void {
+    const handler = this.classFinalizers.get(classId);
+    if (!handler) {
+      return;
+    }
+
+    const runtime = this.getRuntime(rtPtr);
+    if (!runtime) {
+      return;
+    }
+
+    try {
+      const userData = opaque;
+      handler(runtime, userData, classId);
+    } catch (error) {
+      // Silent fail for finalizers
+    }
+  }
+
+  /**
+   * Helper to get module name from module pointer
+   */
+  private getModuleName(ctx: VMContext, modulePtr: number): string | null {
+    const namePtr = ctx.container.exports.HAKO_GetModuleName(ctx.pointer, modulePtr);
+    if (namePtr === 0) {
+      return null;
+    }
+
+    try {
+      return ctx.container.memory.readString(namePtr);
+    } finally {
+      ctx.container.memory.freeCString(ctx.pointer, namePtr);
     }
   }
 
@@ -744,32 +773,35 @@ export class CallbackManager {
   *
   * This is called by the WebAssembly module when a C module needs
   * to be initialized.
-  *
-  * @param ctxPtr - The PrimJS context pointer
-  * @param modulePtr - Pointer to the module definition
-  * @returns 0 on success, -1 on failure
   */
   handleModuleInit(
     ctxPtr: JSContextPointer,
     modulePtr: number
   ): number {
-    if (!this.moduleInitHandler) {
-      console.error("No module init handler registered");
+    const ctx = this.getContext(ctxPtr);
+    if (!ctx) {
       return -1;
     }
 
-    // Get the context object
-    const ctx = this.getContext(ctxPtr);
-    if (!ctx) {
-      console.error(`No context registered for pointer ${ctxPtr}`);
+    // Get the module name to route to the right handler
+    const moduleName = this.getModuleName(ctx, modulePtr);
+    if (!moduleName) {
+      return -1;
+    }
+
+    const handler = this.moduleInitHandlers.get(moduleName);
+    if (!handler) {
       return -1;
     }
 
     try {
-      // Call the module init handler
-      return this.moduleInitHandler(new CModuleInitializer(ctx, modulePtr));
+      // Create the initializer - the handler will set up the parent relationship
+      const initializer = new CModuleInitializer(ctx, modulePtr);
+
+      // The handler is responsible for calling _setParentBuilder and managing the hierarchy
+      const result = handler(initializer);
+      return typeof result === 'number' ? result : 0;
     } catch (error) {
-      console.error("Error in module init handler:", error);
       return -1;
     }
   }

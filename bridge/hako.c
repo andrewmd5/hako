@@ -28,40 +28,46 @@ typedef struct hako_RuntimeData {
   bool debug_log;
 } hako_RuntimeData;
 
+typedef enum {
+  HAKO_MODULE_SOURCE_STRING,       // char* - source code as string
+  HAKO_MODULE_SOURCE_PRECOMPILED,  // LEPUSModuleDef* - precompiled module
+  HAKO_MODULE_SOURCE_ERROR         // NULL - module not found/error
+} HakoModuleSourceType;
+
+typedef struct HakoModuleSource {
+  uint32_t type;  // Type of the module source
+  union {
+    char* source_code;           // Pointer to source code string (if type is
+                                 // HAKO_MODULE_SOURCE_STRING)
+    LEPUSModuleDef* module_def;  // Pointer to precompiled module (if type is
+                                 // HAKO_MODULE_SOURCE_PRECOMPILED)
+  } data;
+} HakoModuleSource;
+
 __attribute__((import_module("hako"),
                import_name("call_function"))) extern LEPUSValue*
-host_call_function(LEPUSContext* ctx,
-                   LEPUSValueConst* this_ptr,
-                   int argc,
-                   LEPUSValueConst* argv,
-                   uint32_t magic_func_id);
+host_call_function(LEPUSContext* ctx, LEPUSValueConst* this_ptr, int argc,
+                   LEPUSValueConst* argv, uint32_t magic_func_id);
 
 __attribute__((import_module("hako"),
                import_name("interrupt_handler"))) extern int
 host_interrupt_handler(LEPUSRuntime* rt, LEPUSContext* ctx, void* opaque);
 
 __attribute__((import_module("hako"),
-               import_name("load_module_source"))) extern char*
-host_load_module_source(LEPUSRuntime* rt,
-                        LEPUSContext* ctx,
-                        CString* module_name,
-                        void* opaque);
+               import_name("load_module"))) extern HakoModuleSource*
+host_load_module(LEPUSRuntime* rt, LEPUSContext* ctx, CString* module_name,
+                 void* opaque);
 
 __attribute__((import_module("hako"),
                import_name("normalize_module"))) extern char*
-host_normalize_module(LEPUSRuntime* rt,
-                      LEPUSContext* ctx,
-                      CString* module_base_name,
-                      CString* module_name,
+host_normalize_module(LEPUSRuntime* rt, LEPUSContext* ctx,
+                      CString* module_base_name, CString* module_name,
                       void* opaque);
 
 __attribute__((import_module("hako"),
                import_name("resolve_module"))) extern char*
-host_resolve_module(LEPUSRuntime* rt,
-                    LEPUSContext* ctx,
-                    CString* module_name,
-                    CString* current_module,
-                    void* opaque);
+host_resolve_module(LEPUSRuntime* rt, LEPUSContext* ctx, CString* module_name,
+                    CString* current_module, void* opaque);
 
 __attribute__((import_module("hako"),
                import_name("profile_function_start"))) extern void
@@ -74,6 +80,15 @@ host_profile_function_end(LEPUSContext* ctx, CString* event, JSVoid* opaque);
 __attribute__((import_module("hako"), import_name("module_init"))) extern int
 host_module_init(LEPUSContext* ctx, LEPUSModuleDef* m);
 
+__attribute__((import_module("hako"),
+               import_name("class_constructor"))) extern LEPUSValue*
+host_class_constructor(LEPUSContext* ctx, LEPUSValueConst* new_target, int argc,
+                       LEPUSValueConst* argv, LEPUSClassID class_id);
+
+__attribute__((import_module("hako"),
+               import_name("class_finalizer"))) extern void
+host_class_finalizer(LEPUSRuntime* rt, JSVoid* opaque, LEPUSClassID class_id);
+
 static HakoBuildInfo build_info = {.version = HAKO_VERSION,
                                    .flags = HAKO_BUILD_FLAGS_VALUE,
                                    .build_date = __DATE__ " " __TIME__,
@@ -84,12 +99,10 @@ static HakoBuildInfo build_info = {.version = HAKO_VERSION,
                                    .config = WASI_CONFIG};
 
 static int ends_with(const char* str, const char* suffix) {
-  if (!str || !suffix)
-    return 0;
+  if (!str || !suffix) return 0;
   size_t lenstr = strlen(str);
   size_t lensuffix = strlen(suffix);
-  if (lensuffix > lenstr)
-    return 0;
+  if (lensuffix > lenstr) return 0;
   return strncmp(str + lenstr - lensuffix, suffix, lensuffix) == 0;
 }
 
@@ -112,10 +125,8 @@ void hako_dump(LEPUSContext* ctx, LEPUSValueConst value) {
 #define MAX_EVENT_BUFFER_SIZE 1024
 static char event_buffer[MAX_EVENT_BUFFER_SIZE];
 
-static int hako_atom_to_str(LEPUSContext* ctx,
-                            JSAtom atom,
-                            const char** out_str,
-                            const char* default_value) {
+static int hako_atom_to_str(LEPUSContext* ctx, JSAtom atom,
+                            const char** out_str, const char* default_value) {
   // Use provided default_value if available, otherwise use "<anonymous>"
   const char* anonymous_str = default_value ? default_value : "<anonymous>";
   if (atom == 0 /*JS_ATOM_NULL*/) {
@@ -131,10 +142,8 @@ static int hako_atom_to_str(LEPUSContext* ctx,
   return 0;  // Static string, no need to free
 }
 
-static void hako_profile_function_start(LEPUSContext* ctx,
-                                        JSAtom func,
-                                        JSAtom filename,
-                                        void* opaque) {
+static void hako_profile_function_start(LEPUSContext* ctx, JSAtom func,
+                                        JSAtom filename, void* opaque) {
   __wasi_errno_t err;
   __wasi_timestamp_t current_time;
   // Get the current time using WASI
@@ -148,11 +157,10 @@ static void hako_profile_function_start(LEPUSContext* ctx,
       hako_atom_to_str(ctx, filename, &filename_str, "file://hako.c");
 
   // Use the shared buffer for formatting the event
-  int written =
-      snprintf(event_buffer, MAX_EVENT_BUFFER_SIZE,
-               "{\"name\": \"%s\",\"cat\": \"js\",\"ph\": \"B\",\"ts\": "
-               "%llu,\"pid\": 1,\"tid\": 1,\"args\": {\"file\": \"%s\"}}",
-               func_str, current_time / 1000, filename_str);
+  snprintf(event_buffer, MAX_EVENT_BUFFER_SIZE,
+           "{\"name\": \"%s\",\"cat\": \"js\",\"ph\": \"B\",\"ts\": "
+           "%llu,\"pid\": 1,\"tid\": 1,\"args\": {\"file\": \"%s\"}}",
+           func_str, current_time / 1000, filename_str);
 
   host_profile_function_start(ctx, event_buffer, opaque);
 
@@ -165,10 +173,8 @@ static void hako_profile_function_start(LEPUSContext* ctx,
   }
 }
 
-static void hako_profile_function_end(LEPUSContext* ctx,
-                                      JSAtom func,
-                                      JSAtom filename,
-                                      void* opaque) {
+static void hako_profile_function_end(LEPUSContext* ctx, JSAtom func,
+                                      JSAtom filename, void* opaque) {
   __wasi_errno_t err;
   __wasi_timestamp_t current_time;
   // Get the current time using WASI
@@ -182,11 +188,10 @@ static void hako_profile_function_end(LEPUSContext* ctx,
       hako_atom_to_str(ctx, filename, &filename_str, "file://hako.c");
 
   // Use the shared buffer for formatting the event
-  int written =
-      snprintf(event_buffer, MAX_EVENT_BUFFER_SIZE,
-               "{\"name\": \"%s\",\"cat\": \"js\",\"ph\": \"E\",\"ts\": "
-               "%llu,\"pid\": 1,\"tid\": 1,\"args\": {\"file\": \"%s\"}}",
-               func_str, current_time / 1000, filename_str);
+  snprintf(event_buffer, MAX_EVENT_BUFFER_SIZE,
+           "{\"name\": \"%s\",\"cat\": \"js\",\"ph\": \"E\",\"ts\": "
+           "%llu,\"pid\": 1,\"tid\": 1,\"args\": {\"file\": \"%s\"}}",
+           func_str, current_time / 1000, filename_str);
 
   host_profile_function_end(ctx, event_buffer, opaque);
 
@@ -234,12 +239,12 @@ static LEPUSModuleDef* hako_compile_module(LEPUSContext* ctx,
   return module;
 }
 
-static LEPUSModuleDef* hako_load_module(LEPUSContext* ctx,
-                                        CString* module_name,
+static LEPUSModuleDef* hako_load_module(LEPUSContext* ctx, CString* module_name,
                                         void* user_data) {
   LEPUSRuntime* rt = LEPUS_GetRuntime(ctx);
-  char* module_source =
-      host_load_module_source(rt, ctx, module_name, user_data);
+  HakoModuleSource* module_source =
+      host_load_module(rt, ctx, module_name, user_data);
+
   if (module_source == NULL) {
     LEPUS_ThrowTypeError(
         ctx,
@@ -249,15 +254,52 @@ static LEPUSModuleDef* hako_load_module(LEPUSContext* ctx,
     return NULL;
   }
 
-  LEPUSModuleDef* module = hako_compile_module(ctx, module_name, module_source);
+  LEPUSModuleDef* result = NULL;
+
+  switch (module_source->type) {
+    case HAKO_MODULE_SOURCE_STRING: {
+      // Compile source code to module
+      char* source_code = (char*)module_source->data.source_code;
+      if (source_code != NULL) {
+        result = hako_compile_module(ctx, module_name, source_code);
+        // Free the source code
+        lepus_free(ctx, source_code);
+      } else {
+        LEPUS_ThrowTypeError(ctx, "Invalid source code for module '%s'",
+                             module_name);
+      }
+      break;
+    }
+
+    case HAKO_MODULE_SOURCE_PRECOMPILED: {
+      // Return precompiled module directly
+      result = (LEPUSModuleDef*)module_source->data.module_def;
+      if (result == NULL) {
+        LEPUS_ThrowTypeError(ctx, "Invalid precompiled module for '%s'",
+                             module_name);
+      }
+      break;
+    }
+
+    case HAKO_MODULE_SOURCE_ERROR:
+    default: {
+      LEPUS_ThrowTypeError(ctx,
+                           "Module not found: '%s'. Please check that the "
+                           "module name is correct "
+                           "and the module is available in your environment.",
+                           module_name);
+      break;
+    }
+  }
+
+  // Free the HakoModuleSource struct
   lepus_free(ctx, module_source);
-  return module;
+
+  return result;
 }
 
-static char* hako_normalize_module(LEPUSContext* ctx,
-                                   CString* module_base_name,
-                                   CString* module_name,
-                                   void* user_data) {
+static char* hako_normalize_module(LEPUSContext* ctx, CString* module_base_name,
+                                   CString* module_name, void* user_data) {
   LEPUSRuntime* rt = LEPUS_GetRuntime(ctx);
   char* normalized_module_name =
       host_normalize_module(rt, ctx, module_base_name, module_name, user_data);
@@ -266,10 +308,8 @@ static char* hako_normalize_module(LEPUSContext* ctx,
   return js_module_name;
 }
 
-static char* hako_resolve_module(LEPUSContext* ctx,
-                                 CString* module_name,
-                                 CString* current_module,
-                                 void* user_data) {
+static char* hako_resolve_module(LEPUSContext* ctx, CString* module_name,
+                                 CString* current_module, void* user_data) {
   LEPUSRuntime* rt = LEPUS_GetRuntime(ctx);
   char* resolved_module_name =
       host_resolve_module(rt, ctx, module_name, current_module, user_data);
@@ -447,31 +487,22 @@ void WASM_EXPORT(HAKO_ContextSetMaxStackSize)(LEPUSContext* ctx,
  */
 
 LEPUSValueConst HAKO_Undefined = LEPUS_UNDEFINED;
-LEPUSValueConst* WASM_EXPORT(HAKO_GetUndefined)() {
-  return &HAKO_Undefined;
-}
+LEPUSValueConst* WASM_EXPORT(HAKO_GetUndefined)() { return &HAKO_Undefined; }
 
 LEPUSValueConst HAKO_Null = LEPUS_NULL;
-LEPUSValueConst* WASM_EXPORT(HAKO_GetNull)() {
-  return &HAKO_Null;
-}
+LEPUSValueConst* WASM_EXPORT(HAKO_GetNull)() { return &HAKO_Null; }
 
 LEPUSValueConst HAKO_False = LEPUS_FALSE;
-LEPUSValueConst* WASM_EXPORT(HAKO_GetFalse)() {
-  return &HAKO_False;
-}
+LEPUSValueConst* WASM_EXPORT(HAKO_GetFalse)() { return &HAKO_False; }
 
 LEPUSValueConst HAKO_True = LEPUS_TRUE;
-LEPUSValueConst* WASM_EXPORT(HAKO_GetTrue)() {
-  return &HAKO_True;
-}
+LEPUSValueConst* WASM_EXPORT(HAKO_GetTrue)() { return &HAKO_True; }
 
 /**
  * Standard FFI functions
  */
 
-void WASM_EXPORT(HAKO_EnableProfileCalls)(LEPUSRuntime* rt,
-                                          uint32_t sampling,
+void WASM_EXPORT(HAKO_EnableProfileCalls)(LEPUSRuntime* rt, uint32_t sampling,
                                           JSVoid* opaque) {
 #ifdef ENABLE_HAKO_PROFILER
   JS_EnableProfileCalls(rt, hako_profile_function_start,
@@ -502,9 +533,7 @@ LEPUSRuntime* WASM_EXPORT(HAKO_NewRuntime)() {
   return rt;
 }
 
-void WASM_EXPORT(HAKO_FreeRuntime)(LEPUSRuntime* rt) {
-  LEPUS_FreeRuntime(rt);
-}
+void WASM_EXPORT(HAKO_FreeRuntime)(LEPUSRuntime* rt) { LEPUS_FreeRuntime(rt); }
 
 void WASM_EXPORT(HAKO_SetStripInfo)(LEPUSRuntime* rt, int flags) {
   LEPUS_SetStripInfo(rt, flags);
@@ -662,8 +691,7 @@ void hako_free_buffer(LEPUSRuntime* rt, void* unused_opaque, void* ptr) {
   lepus_free_rt(rt, ptr);
 }
 
-LEPUSValue* WASM_EXPORT(HAKO_NewArrayBuffer)(LEPUSContext* ctx,
-                                             JSVoid* buffer,
+LEPUSValue* WASM_EXPORT(HAKO_NewArrayBuffer)(LEPUSContext* ctx, JSVoid* buffer,
                                              size_t length) {
   if (length == 0) {
     return jsvalue_to_heap(
@@ -713,8 +741,7 @@ JSVoid* WASM_EXPORT(HAKO_CopyArrayBuffer)(LEPUSContext* ctx,
     return 0;
   }
   memcpy(result, buffer, length);
-  if (out_length)
-    *out_length = length;
+  if (out_length) *out_length = length;
 
   return result;
 }
@@ -731,16 +758,12 @@ LEPUSValue hako_get_symbol_key(LEPUSContext* ctx, LEPUSValueConst* value) {
   return key;
 }
 
-LEPUSValue hako_resolve_func_data(LEPUSContext* ctx,
-                                  LEPUSValueConst this_val,
-                                  int argc,
-                                  LEPUSValueConst* argv,
-                                  int magic,
+LEPUSValue hako_resolve_func_data(LEPUSContext* ctx, LEPUSValueConst this_val,
+                                  int argc, LEPUSValueConst* argv, int magic,
                                   LEPUSValue* func_data) {
   return LEPUS_DupValue(ctx, func_data[0]);
 }
-LEPUSValue* WASM_EXPORT(HAKO_Eval)(LEPUSContext* ctx,
-                                   BorrowedHeapChar* js_code,
+LEPUSValue* WASM_EXPORT(HAKO_Eval)(LEPUSContext* ctx, BorrowedHeapChar* js_code,
                                    size_t js_code_length,
                                    BorrowedHeapChar* filename,
                                    LEPUS_BOOL detect_module,
@@ -819,8 +842,8 @@ LEPUSValue* WASM_EXPORT(HAKO_NewSymbol)(LEPUSContext* ctx,
   return jsvalue_to_heap(ctx, symbol);
 }
 
-JSBorrowedChar* WASM_EXPORT(
-    HAKO_GetSymbolDescriptionOrKey)(LEPUSContext* ctx, LEPUSValueConst* value) {
+JSBorrowedChar* WASM_EXPORT(HAKO_GetSymbolDescriptionOrKey)(
+    LEPUSContext* ctx, LEPUSValueConst* value) {
   JSBorrowedChar* result;
 
   LEPUSValue key = hako_get_symbol_key(ctx, value);
@@ -906,15 +929,10 @@ LEPUS_BOOL WASM_EXPORT(HAKO_SetProp)(LEPUSContext* ctx,
   return result;
 }
 
-LEPUS_BOOL WASM_EXPORT(HAKO_DefineProp)(LEPUSContext* ctx,
-                                        LEPUSValueConst* this_val,
-                                        LEPUSValueConst* prop_name,
-                                        LEPUSValueConst* prop_value,
-                                        LEPUSValueConst* get,
-                                        LEPUSValueConst* set,
-                                        LEPUS_BOOL configurable,
-                                        LEPUS_BOOL enumerable,
-                                        LEPUS_BOOL has_value) {
+LEPUS_BOOL WASM_EXPORT(HAKO_DefineProp)(
+    LEPUSContext* ctx, LEPUSValueConst* this_val, LEPUSValueConst* prop_name,
+    LEPUSValueConst* prop_value, LEPUSValueConst* get, LEPUSValueConst* set,
+    LEPUS_BOOL configurable, LEPUS_BOOL enumerable, LEPUS_BOOL has_value) {
   LEPUSAtom prop_atom = LEPUS_ValueToAtom(ctx, *prop_name);
 
   int flags = 0;
@@ -1029,10 +1047,8 @@ LEPUSValue* WASM_EXPORT(HAKO_GetOwnPropertyNames)(LEPUSContext* ctx,
   return NULL;
 }
 
-LEPUSValue* WASM_EXPORT(HAKO_Call)(LEPUSContext* ctx,
-                                   LEPUSValueConst* func_obj,
-                                   LEPUSValueConst* this_obj,
-                                   int argc,
+LEPUSValue* WASM_EXPORT(HAKO_Call)(LEPUSContext* ctx, LEPUSValueConst* func_obj,
+                                   LEPUSValueConst* this_obj, int argc,
                                    LEPUSValueConst** argv_ptrs) {
   LEPUSValueConst argv[argc];
   int i;
@@ -1183,8 +1199,7 @@ LEPUS_BOOL WASM_EXPORT(HAKO_IsModule)(LEPUSContext* ctx,
 }
 
 LEPUSValue* WASM_EXPORT(HAKO_GetModuleNamespace)(
-    LEPUSContext* ctx,
-    LEPUSValueConst* module_func_obj) {
+    LEPUSContext* ctx, LEPUSValueConst* module_func_obj) {
   if (!LEPUS_VALUE_IS_MODULE(*module_func_obj)) {
     return jsvalue_to_heap(ctx, LEPUS_ThrowTypeError(ctx, "Not a module"));
   }
@@ -1231,8 +1246,7 @@ OwnedHeapChar* WASM_EXPORT(HAKO_Typeof)(LEPUSContext* ctx,
 }
 
 LEPUSAtom HAKO_AtomLength = 0;
-int WASM_EXPORT(HAKO_GetLength)(LEPUSContext* ctx,
-                                uint32_t* out_len,
+int WASM_EXPORT(HAKO_GetLength)(LEPUSContext* ctx, uint32_t* out_len,
                                 LEPUSValueConst* value) {
   LEPUSValue len_val;
   int result;
@@ -1255,10 +1269,8 @@ int WASM_EXPORT(HAKO_GetLength)(LEPUSContext* ctx,
   return result;
 }
 
-LEPUS_BOOL WASM_EXPORT(HAKO_IsEqual)(LEPUSContext* ctx,
-                                     LEPUSValueConst* a,
-                                     LEPUSValueConst* b,
-                                     IsEqualOp op) {
+LEPUS_BOOL WASM_EXPORT(HAKO_IsEqual)(LEPUSContext* ctx, LEPUSValueConst* a,
+                                     LEPUSValueConst* b, IsEqualOp op) {
   switch (op) {
     case HAKO_EqualOp_SameValue:
       return LEPUS_SameValue(ctx, *a, *b);
@@ -1275,8 +1287,7 @@ LEPUSValue* WASM_EXPORT(HAKO_GetGlobalObject)(LEPUSContext* ctx) {
 }
 
 LEPUSValue* WASM_EXPORT(HAKO_NewPromiseCapability)(
-    LEPUSContext* ctx,
-    LEPUSValue** resolve_funcs_out) {
+    LEPUSContext* ctx, LEPUSValue** resolve_funcs_out) {
   LEPUSValue resolve_funcs[2];
   LEPUSValue promise = LEPUS_NewPromiseCapability(ctx, resolve_funcs);
   resolve_funcs_out[0] = jsvalue_to_heap(ctx, resolve_funcs[0]);
@@ -1307,9 +1318,7 @@ LEPUS_BOOL WASM_EXPORT(HAKO_BuildIsDebug)() {
 #endif
 }
 
-CString* WASM_EXPORT(HAKO_GetVersion)() {
-  return HAKO_VERSION;
-}
+CString* WASM_EXPORT(HAKO_GetVersion)() { return HAKO_VERSION; }
 
 uint64_t WASM_EXPORT(HAKO_GetPrimjsVersion)() {
   return LEPUS_GetPrimjsVersion();
@@ -1319,19 +1328,15 @@ uint64_t WASM_EXPORT(HAKO_GetPrimjsVersion)() {
 
 // C -> Host Callbacks
 LEPUSValue* hako_host_call_function(LEPUSContext* ctx,
-                                    LEPUSValueConst* this_ptr,
-                                    int argc,
+                                    LEPUSValueConst* this_ptr, int argc,
                                     LEPUSValueConst* argv,
                                     uint32_t magic_func_id) {
   return host_call_function(ctx, this_ptr, argc, argv, magic_func_id);
 }
 
 // Function: PrimJS -> C
-LEPUSValue hako_call_function(LEPUSContext* ctx,
-                              LEPUSValueConst this_val,
-                              int argc,
-                              LEPUSValueConst* argv,
-                              int magic) {
+LEPUSValue hako_call_function(LEPUSContext* ctx, LEPUSValueConst this_val,
+                              int argc, LEPUSValueConst* argv, int magic) {
   LEPUSValue* result_ptr =
       hako_host_call_function(ctx, &this_val, argc, argv, magic);
   if (result_ptr == NULL) {
@@ -1344,17 +1349,15 @@ LEPUSValue hako_call_function(LEPUSContext* ctx,
   return result;
 }
 
-LEPUSValue* WASM_EXPORT(HAKO_NewFunction)(LEPUSContext* ctx,
-                                          uint32_t func_id,
+LEPUSValue* WASM_EXPORT(HAKO_NewFunction)(LEPUSContext* ctx, uint32_t func_id,
                                           CString* name) {
-  LEPUSValue func_obj =
-      LEPUS_NewCFunctionMagic(ctx, hako_call_function, name, 0,
-                              LEPUS_CFUNC_constructor_or_func_magic, func_id);
+  LEPUSValue func_obj = LEPUS_NewCFunctionMagic(
+      ctx, hako_call_function, name, 0, LEPUS_CFUNC_generic_magic, func_id);
   return jsvalue_to_heap(ctx, func_obj);
 }
 
-LEPUSValueConst* WASM_EXPORT(
-    HAKO_ArgvGetJSValueConstPointer)(LEPUSValueConst* argv, int index) {
+LEPUSValueConst* WASM_EXPORT(HAKO_ArgvGetJSValueConstPointer)(
+    LEPUSValueConst* argv, int index) {
   return &argv[index];
 }
 
@@ -1368,8 +1371,7 @@ void WASM_EXPORT(HAKO_RuntimeDisableInterruptHandler)(LEPUSRuntime* rt) {
 }
 
 void WASM_EXPORT(HAKO_RuntimeEnableModuleLoader)(
-    LEPUSRuntime* rt,
-    LEPUS_BOOL use_custom_normalize) {
+    LEPUSRuntime* rt, LEPUS_BOOL use_custom_normalize) {
   LEPUSModuleNormalizeFunc* module_normalize = NULL;
   if (use_custom_normalize) {
     module_normalize = hako_normalize_module;
@@ -1386,8 +1388,7 @@ LEPUSValue* WASM_EXPORT(HAKO_bjson_encode)(LEPUSContext* ctx,
                                            LEPUSValueConst* val) {
   size_t length;
   uint8_t* buffer = LEPUS_WriteObject(ctx, &length, *val, 0);
-  if (!buffer)
-    return jsvalue_to_heap(ctx, LEPUS_EXCEPTION);
+  if (!buffer) return jsvalue_to_heap(ctx, LEPUS_EXCEPTION);
 
   LEPUSValue array = LEPUS_NewArrayBufferCopy(ctx, buffer, length);
   lepus_free(ctx, buffer);
@@ -1398,8 +1399,7 @@ LEPUSValue* WASM_EXPORT(HAKO_bjson_decode)(LEPUSContext* ctx,
                                            LEPUSValueConst* data) {
   size_t length;
   uint8_t* buffer = LEPUS_GetArrayBuffer(ctx, &length, *data);
-  if (!buffer)
-    return jsvalue_to_heap(ctx, LEPUS_EXCEPTION);
+  if (!buffer) return jsvalue_to_heap(ctx, LEPUS_EXCEPTION);
 
   LEPUSValue value = LEPUS_ReadObject(ctx, buffer, length, 0);
   return jsvalue_to_heap(ctx, value);
@@ -1458,8 +1458,7 @@ JSVoid* WASM_EXPORT(HAKO_CopyTypedArrayBuffer)(LEPUSContext* ctx,
   LEPUSValue buffer = LEPUS_GetTypedArrayBuffer(
       ctx, *val, &byte_offset, &byte_length, &bytes_per_element);
 
-  if (LEPUS_IsException(buffer))
-    return NULL;
+  if (LEPUS_IsException(buffer)) return NULL;
 
   // Now that we have the buffer, get the actual bytes
   size_t buffer_length;
@@ -1480,8 +1479,7 @@ JSVoid* WASM_EXPORT(HAKO_CopyTypedArrayBuffer)(LEPUSContext* ctx,
   memcpy(result, buffer_data + byte_offset, byte_length);
 
   // Set the output length if requested
-  if (out_length)
-    *out_length = byte_length;
+  if (out_length) *out_length = byte_length;
 
   // Free the buffer value we obtained
   LEPUS_FreeValue(ctx, buffer);
@@ -1493,8 +1491,7 @@ LEPUS_BOOL WASM_EXPORT(HAKO_IsArrayBuffer)(LEPUSValueConst* val) {
   return LEPUS_IsArrayBuffer(*val);
 }
 
-LEPUSValue* WASM_EXPORT(HAKO_ToJson)(LEPUSContext* ctx,
-                                     LEPUSValueConst* val,
+LEPUSValue* WASM_EXPORT(HAKO_ToJson)(LEPUSContext* ctx, LEPUSValueConst* val,
                                      int indent) {
   if (LEPUS_IsUndefined(*val)) {
     return jsvalue_to_heap(ctx, LEPUS_NewString(ctx, "undefined"));
@@ -1526,8 +1523,7 @@ void WASM_EXPORT(SetGCThreshold)(LEPUSRuntime* rt, int64_t threshold) {
   LEPUS_SetGCThreshold(rt, threshold);
 }
 
-LEPUSValue* WASM_EXPORT(HAKO_NewBigInt)(LEPUSContext* ctx,
-                                        int32_t low,
+LEPUSValue* WASM_EXPORT(HAKO_NewBigInt)(LEPUSContext* ctx, int32_t low,
                                         int32_t high) {
 #ifdef CONFIG_BIGNUM
   int64_t combined = ((int64_t)high << 32) | ((uint32_t)low);
@@ -1538,8 +1534,7 @@ LEPUSValue* WASM_EXPORT(HAKO_NewBigInt)(LEPUSContext* ctx,
 #endif
 }
 
-LEPUSValue* WASM_EXPORT(HAKO_NewBigUInt)(LEPUSContext* ctx,
-                                         uint32_t low,
+LEPUSValue* WASM_EXPORT(HAKO_NewBigUInt)(LEPUSContext* ctx, uint32_t low,
                                          uint32_t high) {
 #ifdef CONFIG_BIGNUM
   uint64_t combined = ((uint64_t)high << 32) | low;
@@ -1558,9 +1553,8 @@ LEPUSValue* WASM_EXPORT(HAKO_NewDate)(LEPUSContext* ctx, double time) {
   return jsvalue_to_heap(ctx, LEPUS_NewDate(ctx, time));
 }
 
-LEPUSClassID WASM_EXPORT(HAKO_GetClassID)(LEPUSContext* ctx,
-                                          LEPUSValueConst* val) {
-  return LEPUS_GetClassID(ctx, *val);
+LEPUSClassID WASM_EXPORT(HAKO_GetClassID)(LEPUSValueConst* val) {
+  return LEPUS_GetClassID(*val);
 }
 
 LEPUS_BOOL WASM_EXPORT(HAKO_IsInstanceOf)(LEPUSContext* ctx,
@@ -1574,13 +1568,10 @@ HakoBuildInfo* WASM_EXPORT(HAKO_BuildInfo)() {
   return &build_info;
 }
 
-JSVoid* WASM_EXPORT(HAKO_CompileToByteCode)(LEPUSContext* ctx,
-                                            BorrowedHeapChar* js_code,
-                                            size_t js_code_length,
-                                            BorrowedHeapChar* filename,
-                                            LEPUS_BOOL detect_module,
-                                            EvalFlags flags,
-                                            size_t* out_bytecode_length) {
+JSVoid* WASM_EXPORT(HAKO_CompileToByteCode)(
+    LEPUSContext* ctx, BorrowedHeapChar* js_code, size_t js_code_length,
+    BorrowedHeapChar* filename, LEPUS_BOOL detect_module, EvalFlags flags,
+    size_t* out_bytecode_length) {
   if (!js_code || !filename || !out_bytecode_length) {
     LEPUS_ThrowTypeError(ctx, "Invalid arguments");
     return NULL;
@@ -1658,21 +1649,18 @@ LEPUSModuleDef* WASM_EXPORT(HAKO_NewCModule)(LEPUSContext* ctx,
   return LEPUS_NewCModule(ctx, name_str, hako_module_init_wrapper);
 }
 
-int WASM_EXPORT(HAKO_AddModuleExport)(LEPUSContext* ctx,
-                                      LEPUSModuleDef* m,
+int WASM_EXPORT(HAKO_AddModuleExport)(LEPUSContext* ctx, LEPUSModuleDef* m,
                                       CString* export_name) {
   return LEPUS_AddModuleExport(ctx, m, export_name);
 }
 
-int WASM_EXPORT(HAKO_SetModuleExport)(LEPUSContext* ctx,
-                                      LEPUSModuleDef* m,
+int WASM_EXPORT(HAKO_SetModuleExport)(LEPUSContext* ctx, LEPUSModuleDef* m,
                                       CString* export_name,
                                       LEPUSValueConst* val) {
   return LEPUS_SetModuleExport(ctx, m, export_name, LEPUS_DupValue(ctx, *val));
 }
 
-CString* WASM_EXPORT(HAKO_GetModuleName)(LEPUSContext* ctx,
-                                      LEPUSModuleDef* m) {
+CString* WASM_EXPORT(HAKO_GetModuleName)(LEPUSContext* ctx, LEPUSModuleDef* m) {
   if (!m) {
     return NULL;
   }
@@ -1686,4 +1674,93 @@ CString* WASM_EXPORT(HAKO_GetModuleName)(LEPUSContext* ctx,
   }
 
   return atom_str;
+}
+
+static LEPUSValue hako_class_constructor_wrapper(LEPUSContext* ctx,
+                                                 LEPUSValue new_target,
+                                                 int argc, LEPUSValue* argv,
+                                                 int magic) {
+  LEPUSClassID class_id = (LEPUSClassID)magic;
+
+  // Call host constructor
+  LEPUSValue* result =
+      host_class_constructor(ctx, &new_target, argc, argv, class_id);
+
+  if (!result) {
+    return LEPUS_EXCEPTION;
+  }
+
+  LEPUSValue ret = *result;
+  lepus_free(ctx, result);
+  return ret;
+}
+
+// Class finalizer wrapper
+static void hako_class_finalizer_wrapper(LEPUSRuntime* rt, LEPUSValue val) {
+  LEPUSClassID class_id = LEPUS_GetClassID(val);
+
+  if (class_id != 0) {
+    JSVoid* opaque = LEPUS_GetOpaque(val, class_id);
+    host_class_finalizer(rt, opaque, class_id);
+  }
+}
+
+LEPUSClassID WASM_EXPORT(HAKO_NewClassID)(LEPUSClassID* pclass_id) {
+  return LEPUS_NewClassID(pclass_id);
+}
+
+LEPUSValue* WASM_EXPORT(HAKO_NewClass)(LEPUSContext* ctx, LEPUSClassID class_id,
+                                       CString* class_name,
+                                       LEPUS_BOOL has_finalizer) {
+  LEPUSClassDef class_def = {
+      .class_name = class_name,
+      .finalizer = has_finalizer ? hako_class_finalizer_wrapper : NULL,
+      .gc_mark = NULL,
+      .call = NULL,
+      .exotic = NULL};
+
+  // Register the class with the runtime
+  if (LEPUS_NewClass(LEPUS_GetRuntime(ctx), class_id, &class_def) != 0) {
+    return jsvalue_to_heap(
+        ctx,
+        LEPUS_ThrowInternalError(ctx, "Failed to create class '%s' with ID %d",
+                                 class_name, class_id));
+  }
+
+  // Create constructor function that will call our wrapper
+  LEPUSValue constructor =
+      LEPUS_NewCFunctionMagic(ctx, hako_class_constructor_wrapper, class_name,
+                              0, LEPUS_CFUNC_constructor_magic, class_id);
+
+  return jsvalue_to_heap(ctx, constructor);
+}
+
+void WASM_EXPORT(HAKO_SetClassProto)(LEPUSContext* ctx, LEPUSClassID class_id,
+                                     LEPUSValueConst* proto) {
+  LEPUS_SetClassProto(ctx, class_id, *proto);
+}
+
+void WASM_EXPORT(HAKO_SetConstructor)(LEPUSContext* ctx, LEPUSValueConst* ctor,
+                                      LEPUSValueConst* proto) {
+  LEPUS_SetConstructor(ctx, *ctor, *proto);
+}
+
+LEPUSValue* WASM_EXPORT(HAKO_NewObjectClass)(LEPUSContext* ctx,
+                                             LEPUSClassID class_id) {
+  return jsvalue_to_heap(ctx, LEPUS_NewObjectClass(ctx, class_id));
+}
+
+void WASM_EXPORT(HAKO_SetOpaque)(LEPUSValueConst* obj, JSVoid* opaque) {
+  LEPUS_SetOpaque(*obj, opaque);
+}
+
+JSVoid* WASM_EXPORT(HAKO_GetOpaque)(LEPUSContext* ctx, LEPUSValueConst* obj,
+                                    LEPUSClassID class_id) {
+  return LEPUS_GetOpaque2(ctx, *obj, class_id);
+}
+
+LEPUSValue* WASM_EXPORT(HAKO_NewObjectProtoClass)(LEPUSContext* ctx,
+                                                  LEPUSValueConst* proto,
+                                                  LEPUSClassID class_id) {
+  return jsvalue_to_heap(ctx, LEPUS_NewObjectProtoClass(ctx, *proto, class_id));
 }

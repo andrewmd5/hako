@@ -1189,11 +1189,28 @@ export class VMValue implements Disposable {
    */
   classId(): number {
     this.assertAlive();
-    const classId = this.context.container.exports.HAKO_GetClassID(
+    return this.context.container.exports.HAKO_GetClassID(this.handle);
+  }
+
+  getOpaque(): number {
+    this.assertAlive();
+    const result = this.context.container.exports.HAKO_GetOpaque(
       this.context.pointer,
-      this.handle
+      this.handle,
+      this.classId()
     );
-    return classId;
+    if (this.context.getLastError()) {
+      throw this.context.getLastError();
+    }
+    return result;
+  }
+
+  setOpaque(opaque: number): void {
+    this.assertAlive();
+    this.context.container.exports.HAKO_SetOpaque(
+      this.handle,
+      opaque
+    );
   }
 
   /**

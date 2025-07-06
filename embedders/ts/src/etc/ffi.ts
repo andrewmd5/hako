@@ -1,7 +1,7 @@
 /**
- * Generated on: 2025-07-06 00:00:16
+ * Generated on: 2025-07-06 19:33:27
  * Source file: hako.h
- * Git commit: 614d6c22040ed5b0244aa9e46ed8aab3167edcdd
+ * Git commit: b1b44e6e08fd69a40650e228baf547bfa6fee41b
  * Git branch: vnext
  * Git author: Andrew Sampson <andrew@Andrews-Mac-Studio.local>
  * Git remote: https://github.com/andrewmd5/hako.git
@@ -88,6 +88,74 @@ export interface HakoExports {
      * @returns LEPUSValue* - Evaluation result: script return value, module
      */
     HAKO_EvalByteCode(ctx: JSContextPointer, bytecode_buffer: number, bytecode_length: number, load_only: number): JSValuePointer;
+
+    // Class Management
+    /**
+     * Gets opaque data from an object
+     *
+     * @param ctx Context to use
+     * @param obj Object to get data from
+     * @param class_id Expected class ID for type safety
+     * @returns JSVoid* - Opaque data pointer, NULL if wrong class or no data
+     */
+    HAKO_GetOpaque(ctx: JSContextPointer, obj: JSValueConstPointer, class_id: number): number;
+    /**
+     * Creates a new class with constructor and optional finalizer
+     *
+     * @param ctx Context to create class in
+     * @param class_id Class ID to use
+     * @param class_name Name of the class
+     * @param has_finalizer Whether this class needs a finalizer
+     * @returns LEPUSValue* - Constructor function for the class
+     */
+    HAKO_NewClass(ctx: JSContextPointer, class_id: number, class_name: CString, has_finalizer: LEPUS_BOOL): JSValuePointer;
+    /**
+     * Allocates a new class ID
+     *
+     * @param pclass_id Pointer to store the allocated class ID
+     * @returns LEPUSClassID - The allocated class ID
+     */
+    HAKO_NewClassID(pclass_id: number): number;
+    /**
+     * Creates a new instance of a class
+     *
+     * @param ctx Context to use
+     * @param class_id Class ID
+     * @returns LEPUSValue* - New class instance
+     */
+    HAKO_NewObjectClass(ctx: JSContextPointer, class_id: number): JSValuePointer;
+    /**
+     * Creates a new object with a prototype and class ID
+     *
+     * @param ctx Context to create in
+     * @param proto Prototype object
+     * @param class_id Class ID for the new object
+     * @returns LEPUSValue* - New object with specified prototype and class ID
+     */
+    HAKO_NewObjectProtoClass(ctx: JSContextPointer, proto: JSValueConstPointer, class_id: number): JSValuePointer;
+    /**
+     * Sets the prototype for a class
+     *
+     * @param ctx Context to use
+     * @param class_id Class ID
+     * @param proto Prototype object
+     */
+    HAKO_SetClassProto(ctx: JSContextPointer, class_id: number, proto: JSValueConstPointer): void;
+    /**
+     * Links constructor and prototype
+     *
+     * @param ctx Context to use
+     * @param ctor Constructor function
+     * @param proto Prototype object
+     */
+    HAKO_SetConstructor(ctx: JSContextPointer, ctor: JSValueConstPointer, proto: JSValueConstPointer): void;
+    /**
+     * Sets opaque data on an object
+     *
+     * @param obj Object to set data on
+     * @param opaque Opaque data pointer
+     */
+    HAKO_SetOpaque(obj: JSValueConstPointer, opaque: number): void;
 
     // Constants
     /**
@@ -666,11 +734,10 @@ export interface HakoExports {
     /**
      * Gets the class ID of a value
      *
-     * @param ctx Context to use
      * @param val Value to get class ID from
      * @returns LEPUSClassID - Class ID of the value (0 if not a class)
      */
-    HAKO_GetClassID(ctx: JSContextPointer, val: JSValueConstPointer): number;
+    HAKO_GetClassID(val: JSValueConstPointer): number;
     /**
      * Gets the floating point value of a number
      *

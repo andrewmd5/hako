@@ -135,6 +135,12 @@ export type HostCallbackFunction<VmHandle> = (
   // biome-ignore lint/suspicious/noConfusingVoidType: <explanation>
 ) => VmHandle | VmCallResult<VmHandle> | void;
 
+export type ModuleLoaderResult = 
+  | { type: 'source', data: string }           // Source code
+  | { type: 'precompiled', data: number }      // Pointer to LEPUSModuleDef
+  | { type: 'error' }                          // Module not found
+  | null;       
+
 /**
  * Function used to load JavaScript module source code.
  *
@@ -143,7 +149,7 @@ export type HostCallbackFunction<VmHandle> = (
  */
 export type ModuleLoaderFunction = (
   moduleName: string
-) => string | null | Promise<string | null>;
+) => ModuleLoaderResult | Promise<ModuleLoaderResult>;
 
 /**
  * Function used to normalize module specifiers to absolute module names.
@@ -181,6 +187,29 @@ export type ModuleResolverFunction = (
 export type ModuleInitFunction = (
   module: CModuleInitializer,
 ) => number;
+
+/**
+ * Function used to finalize a C classes
+ */
+export type ClassConstructorHandler = (
+  context: VMContext,
+  newTarget: VMValue,
+  args: VMValue[],
+  classId: number
+) => VMValue;
+
+export type ClassFinalizerHandler = (
+  runtime: HakoRuntime,
+  opaque: number,
+  classId: number
+) => void;
+
+
+export interface ClassOptions {
+  finalizer?: ClassFinalizerHandler;
+  methods?: Record<string, HostCallbackFunction<VMValue>>;
+  staticMethods?: Record<string, HostCallbackFunction<VMValue>>;
+}
 
 /**
  * Basic interrupt handler function signature for C callbacks.

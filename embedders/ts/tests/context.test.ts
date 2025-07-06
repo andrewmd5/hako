@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { VMContext } from "../src/vm/context";
-import type { HakoRuntime } from "../src/runtime/runtime";
+import { HakoRuntime } from "../src/runtime/runtime";
 import type { Container } from "../src/runtime/container";
 import type { HakoExports } from "../src/etc/ffi";
 import { createHakoRuntime, decodeVariant, HAKO_PROD, ModuleLoaderFunction } from "../src";
@@ -359,18 +359,6 @@ fibonacci(100);
       let initWasCalled = false;
       let capturedValue: string | null = null;
 
-      // Set up module initialization handler with the nice API
-      runtime.setModuleInitHandler((module) => {
-        console.log(`Init handler called for module: ${module.name}`);
-        initWasCalled = true;
-
-        // Set the export value easily
-        module.setExport("greeting", "hello from C module");
-
-        console.log(`Successfully initialized module: ${module.name}`);
-        return 0; // Success
-      });
-
       // Bind a function to capture values
       using global = context.getGlobalObject();
       using captureFunc = context.newFunction("capture", (value) => {
@@ -380,9 +368,17 @@ fibonacci(100);
       });
       global.setProperty("capture", captureFunc);
 
-      // Create the C module using the builder
-      const moduleBuilder = context.createCModule("my-c-module")
-        .addExport("greeting");
+      // Create the C module with inline handler
+      const moduleBuilder = runtime.createCModule("my-c-module", (module) => {
+        console.log(`Init handler called for module: ${module.name}`);
+        initWasCalled = true;
+
+        // Set the export value easily
+        module.setExport("greeting", "hello from C module");
+
+        console.log(`Successfully initialized module: ${module.name}`);
+        return 0; // Success
+      }).addExport("greeting");
 
       console.log(`Created module: ${moduleBuilder.name}`);
       console.log(`Module exports: ${moduleBuilder.exportNames.join(", ")}`);
@@ -392,8 +388,7 @@ fibonacci(100);
 
       // Set up module loader
       runtime.enableModuleLoader((mn) => {
-        console.log(`Module loader called for: ${mn}`);
-        return null;
+        return { type: "precompiled", data: moduleBuilder.pointer };
       });
 
       // Import the module and capture the value
@@ -402,6 +397,8 @@ fibonacci(100);
       export const test = greeting;
       capture(greeting);
     `, { type: "module" });
+
+
 
       // Check that everything worked
       expect(initWasCalled).toBe(true);
@@ -422,7 +419,19 @@ fibonacci(100);
       let initWasCalled = false;
       const capturedValues: Record<string, unknown> = {};
 
-      runtime.setModuleInitHandler((module) => {
+      // Create capture function
+      using global = context.getGlobalObject();
+      using captureFunc = context.newFunction("captureAll", (...values) => {
+        values.forEach((value, index) => {
+          capturedValues[`value${index}`] = value.asString();
+          console.log(`Captured value${index}:`, capturedValues[`value${index}`]);
+        });
+        return context.undefined();
+      });
+      global.setProperty("captureAll", captureFunc);
+
+      // Create module with multiple exports and inline handler
+      const moduleBuilder = runtime.createCModule("multi-export-module", (module) => {
         console.log(`Initializing module: ${module.name}`);
         initWasCalled = true;
 
@@ -440,25 +449,13 @@ fibonacci(100);
         });
 
         return 0;
-      });
-
-      // Create capture function
-      using global = context.getGlobalObject();
-      using captureFunc = context.newFunction("captureAll", (...values) => {
-        values.forEach((value, index) => {
-          capturedValues[`value${index}`] = value.asString();
-        });
-        return context.undefined();
-      });
-      global.setProperty("captureAll", captureFunc);
-
-      // Create module with multiple exports
-      const moduleBuilder = context.createCModule("multi-export-module")
-        .addExports(["greeting", "version", "count", "isEnabled", "add"]);
+      }).addExports(["greeting", "version", "count", "isEnabled", "add"]);
 
       expect(moduleBuilder.exportNames).toEqual(["greeting", "version", "count", "isEnabled", "add"]);
 
-      runtime.enableModuleLoader(() => null);
+      runtime.enableModuleLoader(() => {
+         return { type: "precompiled", data: moduleBuilder.pointer };
+      });
 
       using result = context.evalCode(`
       import { greeting, version, count, isEnabled, add } from 'multi-export-module';
@@ -478,10 +475,78 @@ fibonacci(100);
 
       // Verify module properties
       expect(moduleBuilder.name).toBe("multi-export-module");
-      expect(moduleBuilder.context).toBe(context);
     });
-  });
 
+    it("should support class exports", () => {
+      let initWasCalled = false;
+      let capturedResults: string[] = [];
+
+      // Create capture function
+      using global = context.getGlobalObject();
+      using captureFunc = context.newFunction("captureResult", (value) => {
+        capturedResults.push(value.asString());
+        return context.undefined();
+      });
+      global.setProperty("captureResult", captureFunc);
+
+      // Create module with class export using the existing setClass method
+     using moduleBuilder = runtime.createCModule("class-module", (module) => {
+  initWasCalled = true;
+  
+  // Create the Point class with simple initialization
+  module.setClass("Point", "Point", (instance, args) => {
+    // Extract constructor arguments
+    const x = args[0]?.asNumber() || 0;
+    const y = args[1]?.asNumber() || 0;
+    
+    // Store coordinates as opaque data (pack x,y into single number)
+    const opaque = (x << 16) | (y & 0xFFFF);
+    instance.setOpaque(opaque);
+    
+    // No return needed - instance is handled automatically
+  }, {
+    methods: {
+      getX: function() {
+        // Extract x from opaque data
+        const opaque = this.getOpaque();
+        const x = (opaque >> 16) & 0xFFFF;
+  
+        return module.context.newNumber(x);
+      },
+      getY: function() {
+        // Extract y from opaque data  
+        const opaque = this.getOpaque();
+        const y = opaque & 0xFFFF;
+        return module.context.newNumber(y);
+      }
+    },
+  });
+  
+  return 0;
+}).addExport("Point");
+
+
+
+runtime.enableModuleLoader(() => {
+  return { type: "precompiled", data: moduleBuilder.pointer };
+});
+
+using result = context.evalCode(`
+  import { Point } from 'class-module';
+  const p1 = new Point(10, 20);
+  const x = p1.getX();
+  const y = p1.getY();
+  captureResult(\`Point(\${x}, \${y})\`);
+  export { Point };
+`, { type: "module" });
+
+
+using namespace = result.unwrap();
+expect(initWasCalled).toBe(true);
+expect(capturedResults[0]).toBe("Point(10, 20)");
+    });
+
+  });
   describe("Value creation", () => {
     it("should create primitive values", () => {
       // Undefined
@@ -851,7 +916,7 @@ fibonacci(100);
         if (!moduleContent) {
           return null;
         }
-        return moduleContent;
+        return { type: 'source', data: moduleContent };
       };
       const resolver = ((moduleName: string, currentModule: string) => {
         console.log(`Resolving module: ${moduleName} from ${currentModule}`);
@@ -1303,7 +1368,11 @@ fibonacci(100);
 
 
       runtime.enableModuleLoader((moduleName) => {
-        return moduleMap.get(moduleName) || null;
+        const moduleContent = moduleMap.get(moduleName);
+        if (!moduleContent) {
+          return null;
+        }
+        return { type: 'source', data: moduleContent };
       });
 
       const code = `
