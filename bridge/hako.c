@@ -1390,24 +1390,32 @@ void WASM_EXPORT(HAKO_RuntimeDisableModuleLoader)(LEPUSRuntime* rt) {
   LEPUS_SetModuleLoaderFunc(rt, NULL, NULL, NULL, NULL, NULL);
 }
 
-LEPUSValue* WASM_EXPORT(HAKO_bjson_encode)(LEPUSContext* ctx,
-                                           LEPUSValueConst* val) {
+JSVoid* WASM_EXPORT(HAKO_BJSON_Encode)(LEPUSContext* ctx, LEPUSValueConst* val,
+                                       size_t* out_length) {
+  if (!out_length) {
+    LEPUS_ThrowTypeError(ctx, "out_length parameter is required");
+    return NULL;
+  }
+
   size_t length;
   uint8_t* buffer = LEPUS_WriteObject(ctx, &length, *val, 0);
-  if (!buffer) return jsvalue_to_heap(ctx, LEPUS_EXCEPTION);
+  if (!buffer) {
+    *out_length = 0;
+    return NULL;
+  }
 
-  LEPUSValue array = LEPUS_NewArrayBufferCopy(ctx, buffer, length);
-  lepus_free(ctx, buffer);
-  return jsvalue_to_heap(ctx, array);
+  *out_length = length;
+  return (JSVoid*)buffer;
 }
 
-LEPUSValue* WASM_EXPORT(HAKO_bjson_decode)(LEPUSContext* ctx,
-                                           LEPUSValueConst* data) {
-  size_t length;
-  uint8_t* buffer = LEPUS_GetArrayBuffer(ctx, &length, *data);
-  if (!buffer) return jsvalue_to_heap(ctx, LEPUS_EXCEPTION);
+LEPUSValue* WASM_EXPORT(HAKO_BJSON_Decode)(LEPUSContext* ctx, JSVoid* buffer,
+                                           size_t length) {
+  if (!buffer || length == 0) {
+    return jsvalue_to_heap(
+        ctx, LEPUS_ThrowTypeError(ctx, "Invalid buffer or length"));
+  }
 
-  LEPUSValue value = LEPUS_ReadObject(ctx, buffer, length, 0);
+  LEPUSValue value = LEPUS_ReadObject(ctx, (const uint8_t*)buffer, length, 0);
   return jsvalue_to_heap(ctx, value);
 }
 

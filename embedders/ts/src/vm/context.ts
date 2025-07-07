@@ -5,6 +5,7 @@
  * with the JavaScript environment inside the VM.
  */
 
+import { HakoError } from "../etc/errors";
 import {
   type ContextEvalOptions,
   type CString,
@@ -1041,29 +1042,37 @@ export class VMContext implements Disposable {
    * @throws If encoding fails
    */
   bjsonEncode(value: VMValue): Uint8Array {
-    const resultPtr = this.container.exports.HAKO_bjson_encode(
-      this.ctxPtr,
-      value.getHandle()
-    );
-
-    // Check for exception
-    const exceptionPtr = this.container.error.getLastErrorPointer(
-      this.ctxPtr,
-      resultPtr
-    );
-    if (exceptionPtr !== 0) {
-      const error = this.container.error.getExceptionDetails(
+    return Scope.withScope((scope) => {
+      // Allocate memory for the length output parameter
+      const lengthPtr = this.container.memory.allocatePointerArray(this.ctxPtr, 1);
+      scope.add(() => this.container.memory.freeMemory(this.ctxPtr, lengthPtr));
+      
+      const bufferPtr = this.container.exports.HAKO_BJSON_Encode(
         this.ctxPtr,
-        exceptionPtr
+        value.getHandle(),
+        lengthPtr
       );
-      this.container.memory.freeValuePointer(this.ctxPtr, resultPtr);
-      this.container.memory.freeValuePointer(this.ctxPtr, exceptionPtr);
-      throw error;
-    }
 
-    using result = new VMValue(this, resultPtr, ValueLifecycle.Owned);
+      // Check if encoding failed (returns null)
+      if (bufferPtr === 0) {
+        const lastError = this.getLastError();
+        if (lastError) {
+          throw new HakoError("BJSON encoding failed", { cause: lastError });
+        }
+        throw new HakoError("BJSON encoding failed");
+      }
 
-    return new Uint8Array(result.copyArrayBuffer());
+      // Read the length from the output parameter
+      const length = this.container.memory.readPointer(lengthPtr);
+
+      // Copy the data from WASM memory to a Uint8Array
+      const result = this.container.memory.copy(bufferPtr, length);
+
+      // Free the buffer allocated by the C function
+      this.container.memory.freeMemory(this.ctxPtr, bufferPtr);
+
+      return result;
+    });
   }
 
   /**
@@ -1073,30 +1082,26 @@ export class VMContext implements Disposable {
    * @returns The decoded VM value
    * @throws If decoding fails
    */
-  bjsonDecode(data: Uint8Array): VMValue | null {
-    using arrayBuffer = this.newArrayBuffer(data);
+  bjsonDecode(data: Uint8Array): VMValue {
+    return Scope.withScope((scope) => {
+      // Allocate memory for the data in WASM
+      const bufferPtr = this.container.memory.writeBytes(this.ctxPtr, data);
+      scope.add(() => this.container.memory.freeMemory(this.ctxPtr, bufferPtr));
 
-    const resultPtr = this.container.exports.HAKO_bjson_decode(
-      this.ctxPtr,
-      arrayBuffer.getHandle()
-    );
-
-    // Check for exception
-    const exceptionPtr = this.container.error.getLastErrorPointer(
-      this.ctxPtr,
-      resultPtr
-    );
-    if (exceptionPtr !== 0) {
-      const error = this.container.error.getExceptionDetails(
+      const resultPtr = this.container.exports.HAKO_BJSON_Decode(
         this.ctxPtr,
-        exceptionPtr
+        bufferPtr,
+        data.byteLength
       );
-      this.container.memory.freeValuePointer(this.ctxPtr, resultPtr);
-      this.container.memory.freeValuePointer(this.ctxPtr, exceptionPtr);
-      throw error;
-    }
 
-    return new VMValue(this, resultPtr, ValueLifecycle.Owned);
+      // Check for exception
+      const error = this.getLastError(resultPtr);
+      if (error) {
+        throw new HakoError("BJSON decoding failed", { cause: error });
+      }
+
+      return new VMValue(this, resultPtr, ValueLifecycle.Owned);
+    });
   }
 
   /**

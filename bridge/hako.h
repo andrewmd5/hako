@@ -1128,28 +1128,34 @@ uint64_t HAKO_GetPrimjsVersion();
  *
  * @param ctx Context to use
  * @param val Value to encode
- * @return LEPUSValue* - ArrayBuffer containing encoded data
+ * @param out_length Pointer to store the length of the encoded data
+ * @return JSVoid* - Raw buffer containing encoded data (must be freed with
+ * HAKO_Free)
  * @tsparam ctx JSContextPointer
  * @tsparam val JSValueConstPointer
- * @tsreturn JSValuePointer
+ * @tsparam out_length number
+ * @tsreturn number
  */
-LEPUSValue* HAKO_bjson_encode(LEPUSContext* ctx, LEPUSValueConst* val);
+JSVoid* HAKO_BJSON_Encode(LEPUSContext* ctx, LEPUSValueConst* val,
+                          size_t* out_length);
 
 /**
  * @brief Decodes a value from binary JSON format
  * @category Binary JSON
  *
  * @param ctx Context to use
- * @param data ArrayBuffer containing encoded data
+ * @param buffer Raw buffer containing encoded data
+ * @param length Length of the buffer
  * @return LEPUSValue* - Decoded value
  * @tsparam ctx JSContextPointer
- * @tsparam data JSValueConstPointer
+ * @tsparam buffer number
+ * @tsparam length number
  * @tsreturn JSValuePointer
  */
-LEPUSValue* HAKO_bjson_decode(LEPUSContext* ctx, LEPUSValueConst* data);
+LEPUSValue* HAKO_BJSON_Decode(LEPUSContext* ctx, JSVoid* buffer, size_t length);
 
 /**
- * @brief Covnerts a value to JSON format
+ * @brief Converts a value to JSON format
  * @category Value Operations
  *
  * @param ctx Context to use
@@ -1507,7 +1513,7 @@ LEPUSValue* HAKO_GetModulePrivateValue(LEPUSContext* ctx,
  * @param value Value to check
  * @return LEPUS_BOOL - True if value is null
  * @tsparam value JSValueConstPointer
- * @tsreturn LEPUS_BOOL     
+ * @tsreturn LEPUS_BOOL
  */
 LEPUS_BOOL HAKO_IsNull(LEPUSValueConst* value);
 
