@@ -202,7 +202,6 @@ export class VMValue implements Disposable {
    */
   get type(): JSType {
     this.assertAlive();
-    console.debug(`Getting type for value with handle ${this.handle}`);
     if (this.isNull()) return "object"; // Special case for null
     return this.getValueType();
   }
