@@ -68,6 +68,17 @@ typedef enum IsEqualOp {
   HAKO_EqualOp_SameValueZero = 2
 } IsEqualOp;
 
+typedef enum {
+  HAKO_TYPE_UNDEFINED = 0,
+  HAKO_TYPE_OBJECT = 1,
+  HAKO_TYPE_STRING = 2,
+  HAKO_TYPE_SYMBOL = 3,
+  HAKO_TYPE_BOOLEAN = 4,
+  HAKO_TYPE_NUMBER = 5,
+  HAKO_TYPE_BIGINT = 6,
+  HAKO_TYPE_FUNCTION = 7
+} HAKOTypeOf;
+
 /**
  * @brief Creates a new Hako runtime
  * @category Runtime Management
@@ -796,17 +807,17 @@ JSBorrowedChar* HAKO_GetSymbolDescriptionOrKey(LEPUSContext* ctx,
 LEPUS_BOOL HAKO_IsGlobalSymbol(LEPUSContext* ctx, LEPUSValueConst* value);
 
 /**
- * @brief Gets the type of a value as a string
+ * @brief Gets the type of a value
  * @category Value Operations
  *
  * @param ctx Context to use
  * @param value Value to get type of
- * @return OwnedHeapChar* - Type name
+ * @return HAKOTypeOf - Type id
  * @tsparam ctx JSContextPointer
  * @tsparam value JSValueConstPointer
- * @tsreturn OwnedHeapChar
+ * @tsreturn HAKOTypeOf
  */
-OwnedHeapChar* HAKO_Typeof(LEPUSContext* ctx, LEPUSValueConst* value);
+HAKOTypeOf HAKO_Typeof(LEPUSContext* ctx, LEPUSValueConst* value);
 
 /**
  * @brief Checks if a value is an array
@@ -1463,8 +1474,6 @@ JSVoid* HAKO_GetOpaque(LEPUSContext* ctx, LEPUSValueConst* obj,
 LEPUSValue* HAKO_NewObjectProtoClass(LEPUSContext* ctx, LEPUSValueConst* proto,
                                      LEPUSClassID class_id);
 
-
-
 /**
  * @brief Sets a private value associated with a module
  * @category Module Creation
@@ -1476,8 +1485,7 @@ LEPUSValue* HAKO_NewObjectProtoClass(LEPUSContext* ctx, LEPUSValueConst* proto,
  * @tsparam module LEPUSModuleDef
  * @tsparam value JSValuePointer
  */
-void HAKO_SetModulePrivateValue(LEPUSContext* ctx,
-                                LEPUSModuleDef* module,
+void HAKO_SetModulePrivateValue(LEPUSContext* ctx, LEPUSModuleDef* module,
                                 LEPUSValue* value);
 
 /**
@@ -1491,7 +1499,8 @@ void HAKO_SetModulePrivateValue(LEPUSContext* ctx,
  * @tsparam module LEPUSModuleDef
  * @tsreturn JSValuePointer
  */
-LEPUSValue* HAKO_GetModulePrivateValue(LEPUSContext* ctx, LEPUSModuleDef* module);
+LEPUSValue* HAKO_GetModulePrivateValue(LEPUSContext* ctx,
+                                       LEPUSModuleDef* module);
 
 #ifdef HAKO_DEBUG_MODE
 #define HAKO_LOG(msg) hako_log(msg)

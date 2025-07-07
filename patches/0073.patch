@@ -1,0 +1,109 @@
+From 81e86784afb131f9950451aecc37826400f83eea Mon Sep 17 00:00:00 2001
+From: Andrew Sampson <andrew@Andrews-Mac-Studio.local>
+Date: Mon, 7 Jul 2025 17:08:48 +0900
+Subject: [PATCH] feat: expose TypeOf function
+
+---
+ src/interpreter/quickjs/include/quickjs.h |  3 +-
+ src/interpreter/quickjs/source/quickjs.cc | 65 +++++++++++++++++++++++
+ 2 files changed, 67 insertions(+), 1 deletion(-)
+
+diff --git a/src/interpreter/quickjs/include/quickjs.h b/src/interpreter/quickjs/include/quickjs.h
+index 3f1c604..dfc8eef 100644
+--- a/src/interpreter/quickjs/include/quickjs.h
++++ b/src/interpreter/quickjs/include/quickjs.h
+@@ -1631,13 +1631,14 @@ int LEPUS_SetModuleExportList(LEPUSContext *ctx, LEPUSModuleDef *m,
+ int LEPUS_SetModulePrivateValue(LEPUSContext *ctx, LEPUSModuleDef *m, LEPUSValue val);
+ LEPUSValue LEPUS_GetModulePrivateValue(LEPUSContext *ctx, LEPUSModuleDef *m);
+ 
++uint32_t LEPUS_TypeOf(LEPUSContext *ctx, LEPUSValueConst val);
++
+ /* expose for napi use */
+ LEPUSValue lepus_object_getOwnPropertyDescriptor(LEPUSContext *ctx,
+                                                  LEPUSValueConst this_val,
+                                                  int argc,
+                                                  LEPUSValueConst *argv,
+                                                  int magic);
+-
+ // <Primjs begin>
+ QJS_EXPORT_FOR_DEVTOOL int64_t find_line_num(LEPUSContext *ctx,
+                                              struct LEPUSFunctionBytecode *b,
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 220b477..429c5cf 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -27093,6 +27093,71 @@ void LEPUS_SetModuleLoaderFunc(LEPUSRuntime *rt,
+   rt->module_loader_opaque = opaque;
+ }
+ 
++uint32_t LEPUS_TypeOf(LEPUSContext* ctx, LEPUSValueConst* value) {
++    int64_t tag = LEPUS_VALUE_GET_NORM_TAG(*value);
++    
++    switch (tag) {
++        case LEPUS_TAG_UNDEFINED:
++            return 0;
++            
++        case LEPUS_TAG_NULL:
++            return 1;
++            
++        case LEPUS_TAG_STRING:
++        case LEPUS_TAG_SEPARABLE_STRING:
++            return 2;
++            
++        case LEPUS_TAG_SYMBOL:
++            return 3;
++            
++        case LEPUS_TAG_BOOL:
++            return 4;
++            
++#ifdef CONFIG_BIGNUM
++        case LEPUS_TAG_INT:
++            if (is_bignum_mode(ctx))
++                return 6;
++            else
++                return 5;
++                
++        case LEPUS_TAG_FLOAT64:
++            return 5;
++            
++        case LEPUS_TAG_BIG_INT:
++            return 6;
++            
++        case LEPUS_TAG_BIG_FLOAT:
++            return 5;
++#else
++        case LEPUS_TAG_INT:
++        case LEPUS_TAG_FLOAT64:
++#ifdef ENABLE_LEPUSNG
++        case LEPUS_TAG_BIG_INT:
++#endif
++            return 5;
++#endif
++
++        case LEPUS_TAG_OBJECT:
++            if (LEPUS_IsFunction(ctx, *value))
++                return 7;
++            else
++                return 1;
++
++#ifdef ENABLE_LEPUSNG
++        case LEPUS_TAG_LEPUS_REF:
++            if (ctx && (JS_LepusRefIsArray(ctx->rt, *value) ||
++                       JS_LepusRefIsTable(ctx->rt, *value))) {
++                return 1;
++            } else {
++                return 0;
++            }
++#endif
++            
++        default:
++            return 0;
++    }
++}
++
+ QJS_STATIC char *js_default_module_normalize_name(LEPUSContext *ctx,
+                                                    const char *base_name,
+                                                    const char *name) {
+-- 
+2.45.2
+
