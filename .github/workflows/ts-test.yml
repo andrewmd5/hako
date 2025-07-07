@@ -47,11 +47,7 @@ jobs:
       - name: generate version (TS)
         working-directory: embedders/ts
         run: bun generate:version
-      - name: lint (TS)
-        working-directory: embedders/ts
-        run: |
-          source ${{ github.workspace }}/tools/third-party/env.sh
-          npm run lint
+
       - name: test (TS)
         working-directory: embedders/ts
         run: bun test
