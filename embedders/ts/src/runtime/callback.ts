@@ -121,9 +121,15 @@ export class CallbackManager {
           rtPtr: number,
           ctxPtr: number,
           moduleNamePtr: number,
-          _opaque: number
+          _opaque: number,
+          attributesPtr: number
         ): number => {
-          return this.handleModuleLoad(rtPtr, ctxPtr, moduleNamePtr);
+          return this.handleModuleLoad(
+            rtPtr,
+            ctxPtr,
+            moduleNamePtr,
+            attributesPtr
+          );
         },
 
         normalize_module: (
@@ -169,10 +175,7 @@ export class CallbackManager {
         ): void => {
           this.handleProfileFunctionEnd(ctxPtr, func_name, opaque);
         },
-        module_init: (
-          ctxPtr: number,
-          modulePtr: number
-        ): number => {
+        module_init: (ctxPtr: number, modulePtr: number): number => {
           return this.handleModuleInit(ctxPtr, modulePtr);
         },
         class_constructor: (
@@ -182,7 +185,13 @@ export class CallbackManager {
           argvPtr: number,
           classId: number
         ): number => {
-          return this.handleClassConstructor(ctxPtr, newTargetPtr, argc, argvPtr, classId);
+          return this.handleClassConstructor(
+            ctxPtr,
+            newTargetPtr,
+            argc,
+            argvPtr,
+            classId
+          );
         },
 
         class_finalizer: (
@@ -244,7 +253,10 @@ export class CallbackManager {
     this.runtimeRegistry.delete(rtPtr);
   }
 
-  registerModuleInitHandler(moduleName: string, handler: ModuleInitFunction): void {
+  registerModuleInitHandler(
+    moduleName: string,
+    handler: ModuleInitFunction
+  ): void {
     this.moduleInitHandlers.set(moduleName, handler);
   }
 
@@ -252,11 +264,17 @@ export class CallbackManager {
     this.moduleInitHandlers.delete(moduleName);
   }
 
-  registerClassConstructor(classId: number, handler: ClassConstructorHandler): void {
+  registerClassConstructor(
+    classId: number,
+    handler: ClassConstructorHandler
+  ): void {
     this.classConstructors.set(classId, handler);
   }
 
-  registerClassFinalizer(classId: number, handler: ClassFinalizerHandler): void {
+  registerClassFinalizer(
+    classId: number,
+    handler: ClassFinalizerHandler
+  ): void {
     this.classFinalizers.set(classId, handler);
   }
 
@@ -319,9 +337,7 @@ export class CallbackManager {
     this.moduleNormalizer = normalizer;
   }
 
-  setModuleResolver(
-    resolver: ModuleResolverFunction | null
-  ): void {
+  setModuleResolver(resolver: ModuleResolverFunction | null): void {
     this.moduleResolver = resolver;
   }
 
@@ -423,7 +439,6 @@ export class CallbackManager {
         }
 
         return this.exports.HAKO_GetUndefined();
-
       } catch (error) {
         try {
           using errorHandle = ctx.newValue(error as Error);
@@ -438,7 +453,10 @@ export class CallbackManager {
   /**
    * Creates a HakoModuleSource struct for source code
    */
-  private createModuleSourceString(ctxPtr: JSContextPointer, sourceCode: string): number {
+  private createModuleSourceString(
+    ctxPtr: JSContextPointer,
+    sourceCode: string
+  ): number {
     // Allocate memory for the HakoModuleSource struct
     // struct layout: 4 bytes (enum) + 4 bytes (union pointer) = 8 bytes
     const structSize = 8;
@@ -457,10 +475,10 @@ export class CallbackManager {
     // Write the struct data
     const exports = this.exports;
     const view = new DataView(exports.memory.buffer);
-    
+
     // Write type (enum value) at offset 0
     view.setUint32(structPtr, HAKO_MODULE_SOURCE_STRING, true);
-    
+
     // Write union data (source_code pointer) at offset 4
     view.setUint32(structPtr + 4, sourcePtr, true);
 
@@ -470,7 +488,10 @@ export class CallbackManager {
   /**
    * Creates a HakoModuleSource struct for precompiled module
    */
-  private createModuleSourcePrecompiled(ctxPtr: JSContextPointer, moduleDefPtr: number): number {
+  private createModuleSourcePrecompiled(
+    ctxPtr: JSContextPointer,
+    moduleDefPtr: number
+  ): number {
     // Allocate memory for the HakoModuleSource struct
     const structSize = 8;
     const structPtr = this.exports.HAKO_Malloc(ctxPtr, structSize);
@@ -481,10 +502,10 @@ export class CallbackManager {
     // Write the struct data
     const exports = this.exports;
     const view = new DataView(exports.memory.buffer);
-    
+
     // Write type (enum value) at offset 0
     view.setUint32(structPtr, HAKO_MODULE_SOURCE_PRECOMPILED, true);
-    
+
     // Write union data (module_def pointer) at offset 4
     view.setUint32(structPtr + 4, moduleDefPtr, true);
 
@@ -505,10 +526,10 @@ export class CallbackManager {
     // Write the struct data
     const exports = this.exports;
     const view = new DataView(exports.memory.buffer);
-    
+
     // Write type (enum value) at offset 0
     view.setUint32(structPtr, HAKO_MODULE_SOURCE_ERROR, true);
-    
+
     // Write union data (NULL pointer) at offset 4
     view.setUint32(structPtr + 4, 0, true);
 
@@ -524,28 +545,39 @@ export class CallbackManager {
   handleModuleLoad(
     _rtPtr: JSRuntimePointer,
     ctxPtr: JSContextPointer,
-    moduleNamePtr: number
+    moduleNamePtr: number,
+    attributesPtr: number
   ): number {
     return Scope.withScopeMaybeAsync(this, function* (awaited, _scope) {
       if (!this.moduleLoader) {
         return this.createModuleSourceError(ctxPtr);
       }
 
+      const ctx = this.getContext(ctxPtr);
+      if (!ctx) {
+        return this.createModuleSourceError(ctxPtr);
+      }
       const moduleName = this.memory.readString(moduleNamePtr);
-      const moduleResult = yield* awaited(this.moduleLoader(moduleName));
 
+      let attributes: Record<string, string> | undefined;
+      if (attributesPtr !== 0) {
+        using att = ctx.borrowValue(attributesPtr);
+        using box = att.toNativeValue<Record<string, string>>();
+        attributes = box.value;
+      }
+
+      const moduleResult = yield* awaited(
+        this.moduleLoader(moduleName, attributes)
+      );
       if (moduleResult === null) {
         return this.createModuleSourceError(ctxPtr);
       }
-
       switch (moduleResult.type) {
-        case 'source':
+        case "source":
           return this.createModuleSourceString(ctxPtr, moduleResult.data);
-        
-        case 'precompiled':
+        case "precompiled":
           return this.createModuleSourcePrecompiled(ctxPtr, moduleResult.data);
-        
-        case 'error':
+        case "error":
         default:
           return this.createModuleSourceError(ctxPtr);
       }
@@ -568,7 +600,7 @@ export class CallbackManager {
     }
 
     const moduleName = this.memory.readString(moduleNamePtr);
-    let currentModuleName;
+    let currentModuleName: string | undefined;
     if (currentModulePtr !== 0) {
       currentModuleName = this.memory.readString(currentModulePtr);
     }
@@ -721,7 +753,6 @@ export class CallbackManager {
         }
 
         return this.exports.HAKO_GetUndefined();
-
       } catch (error) {
         try {
           using errorHandle = ctx.newValue(error as Error);
@@ -756,7 +787,10 @@ export class CallbackManager {
    * Helper to get module name from module pointer
    */
   private getModuleName(ctx: VMContext, modulePtr: number): string | null {
-    const namePtr = ctx.container.exports.HAKO_GetModuleName(ctx.pointer, modulePtr);
+    const namePtr = ctx.container.exports.HAKO_GetModuleName(
+      ctx.pointer,
+      modulePtr
+    );
     if (namePtr === 0) {
       return null;
     }
@@ -769,15 +803,12 @@ export class CallbackManager {
   }
 
   /**
-  * Handles a C module initialization request from PrimJS.
-  *
-  * This is called by the WebAssembly module when a C module needs
-  * to be initialized.
-  */
-  handleModuleInit(
-    ctxPtr: JSContextPointer,
-    modulePtr: number
-  ): number {
+   * Handles a C module initialization request from PrimJS.
+   *
+   * This is called by the WebAssembly module when a C module needs
+   * to be initialized.
+   */
+  handleModuleInit(ctxPtr: JSContextPointer, modulePtr: number): number {
     const ctx = this.getContext(ctxPtr);
     if (!ctx) {
       return -1;
@@ -800,7 +831,7 @@ export class CallbackManager {
 
       // The handler is responsible for calling _setParentBuilder and managing the hierarchy
       const result = handler(initializer);
-      return typeof result === 'number' ? result : 0;
+      return typeof result === "number" ? result : 0;
     } catch (error) {
       return -1;
     }

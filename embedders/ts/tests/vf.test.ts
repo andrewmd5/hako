@@ -319,7 +319,7 @@ describe("ValueFactory", () => {
       };
 
       using fnVal = context.newValue(testFn, { name: "testFn" });
-     
+
       using result = context.callFunction(fnVal, undefined);
 
       expect(result.error).toBeUndefined();
@@ -532,8 +532,6 @@ describe("ValueFactory", () => {
       expect(name.asString()).toBe("TypeError");
     });
   });
-
-
 
   // Complex Object Tests
   describe("Complex Objects", () => {

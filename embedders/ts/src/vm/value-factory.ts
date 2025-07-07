@@ -284,7 +284,10 @@ export class ValueFactory implements Disposable {
    * @private
    */
   private createString(value: string): VMValue {
-    const strPtr = this.container.memory.allocateString(this.context.pointer, value);
+    const strPtr = this.container.memory.allocateString(
+      this.context.pointer,
+      value
+    );
     const jsStrPtr = this.container.exports.HAKO_NewString(
       this.context.pointer,
       strPtr
@@ -433,7 +436,7 @@ export class ValueFactory implements Disposable {
     if (lastError) {
       this.container.memory.freeValuePointer(this.context.pointer, valuePtr);
       throw lastError;
-    }   
+    }
     return new VMValue(this.context, valuePtr, ValueLifecycle.Owned);
   }
 
@@ -472,7 +475,7 @@ export class ValueFactory implements Disposable {
 
     // Add all properties from the source object
     for (const key in value) {
-      if (Object.prototype.hasOwnProperty.call(value, key)) {
+      if (Object.hasOwn(value, key)) {
         using propValue = this.fromNativeValue(value[key]);
         if (propValue) {
           jsObj.setProperty(key, propValue);
@@ -498,7 +501,7 @@ export class ValueFactory implements Disposable {
 
   /**
    * Disposes of all resources.
-   * 
+   *
    * Since caching has been removed, this method is now a no-op
    * but is kept for interface compatibility.
    */

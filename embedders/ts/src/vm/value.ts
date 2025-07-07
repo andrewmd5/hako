@@ -514,13 +514,19 @@ export class VMValue implements Disposable {
       }
       let keyPtr: number;
       if (typeof key === "string") {
-        const keyStrPtr = this.context.container.memory.allocateString(this.context.pointer, key);
+        const keyStrPtr = this.context.container.memory.allocateString(
+          this.context.pointer,
+          key
+        );
         keyPtr = this.context.container.exports.HAKO_NewString(
           this.context.pointer,
           keyStrPtr
         );
         scope.add(() => {
-          this.context.container.memory.freeMemory(this.context.pointer, keyStrPtr);
+          this.context.container.memory.freeMemory(
+            this.context.pointer,
+            keyStrPtr
+          );
           this.context.container.memory.freeValuePointer(
             this.context.pointer,
             keyPtr
@@ -712,8 +718,14 @@ export class VMValue implements Disposable {
     let outPtrsBase: number | null = null;
     let outLen = 0;
 
-    const outPtrPtr = this.context.container.memory.allocatePointerArray(this.context.pointer, 2);
-    const outLenPtr = this.context.container.memory.allocateMemory(this.context.pointer, 4);
+    const outPtrPtr = this.context.container.memory.allocatePointerArray(
+      this.context.pointer,
+      2
+    );
+    const outLenPtr = this.context.container.memory.allocateMemory(
+      this.context.pointer,
+      4
+    );
 
     scope.add(() => {
       this.context.container.memory.freeMemory(this.context.pointer, outPtrPtr);
@@ -765,7 +777,10 @@ export class VMValue implements Disposable {
     }
 
     if (outPtrsBase !== null) {
-      this.context.container.memory.freeMemory(this.context.pointer, outPtrsBase);
+      this.context.container.memory.freeMemory(
+        this.context.pointer,
+        outPtrsBase
+      );
     }
     scope.release();
   }
@@ -782,10 +797,12 @@ export class VMValue implements Disposable {
     if (!this.isPromise()) {
       throw new Error("Value is not a promise");
     }
-    switch (this.context.container.exports.HAKO_PromiseState(
-      this.context.pointer,
-      this.handle
-    )) {
+    switch (
+      this.context.container.exports.HAKO_PromiseState(
+        this.context.pointer,
+        this.handle
+      )
+    ) {
       case 0:
         return "pending";
       case 1:
@@ -794,7 +811,6 @@ export class VMValue implements Disposable {
         return "rejected";
       default:
         return undefined;
-
     }
   }
 
@@ -1026,7 +1042,10 @@ export class VMValue implements Disposable {
       throw new TypeError("Value is not a Uint8Array");
     }
     return Scope.withScope((scope) => {
-      const pointer = this.context.container.memory.allocatePointerArray(this.context.pointer, 1);
+      const pointer = this.context.container.memory.allocatePointerArray(
+        this.context.pointer,
+        1
+      );
       scope.add(() => {
         this.context.container.memory.freeMemory(this.context.pointer, pointer);
       });
@@ -1073,7 +1092,10 @@ export class VMValue implements Disposable {
       throw new TypeError("Value is not an ArrayBuffer");
     }
     return Scope.withScope((scope) => {
-      const pointer = this.context.container.memory.allocatePointerArray(this.context.pointer, 1);
+      const pointer = this.context.container.memory.allocatePointerArray(
+        this.context.pointer,
+        1
+      );
       scope.add(() => {
         this.context.container.memory.freeMemory(this.context.pointer, pointer);
       });
@@ -1194,6 +1216,7 @@ export class VMValue implements Disposable {
 
   getOpaque(): number {
     this.assertAlive();
+
     const result = this.context.container.exports.HAKO_GetOpaque(
       this.context.pointer,
       this.handle,
@@ -1207,10 +1230,16 @@ export class VMValue implements Disposable {
 
   setOpaque(opaque: number): void {
     this.assertAlive();
-    this.context.container.exports.HAKO_SetOpaque(
-      this.handle,
-      opaque
-    );
+    this.context.container.exports.HAKO_SetOpaque(this.handle, opaque);
+  }
+
+  freeOpaque(): void {
+    this.assertAlive();
+    const opaque = this.getOpaque();
+    if (opaque !== 0) {
+      this.context.container.exports.HAKO_Free(this.context.pointer, opaque);
+      this.setOpaque(0);
+    }
   }
 
   /**

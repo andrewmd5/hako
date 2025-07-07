@@ -56,7 +56,7 @@ host_interrupt_handler(LEPUSRuntime* rt, LEPUSContext* ctx, void* opaque);
 __attribute__((import_module("hako"),
                import_name("load_module"))) extern HakoModuleSource*
 host_load_module(LEPUSRuntime* rt, LEPUSContext* ctx, CString* module_name,
-                 void* opaque);
+                 void* opaque, LEPUSValueConst* attributes);
 
 __attribute__((import_module("hako"),
                import_name("normalize_module"))) extern char*
@@ -240,10 +240,11 @@ static LEPUSModuleDef* hako_compile_module(LEPUSContext* ctx,
 }
 
 static LEPUSModuleDef* hako_load_module(LEPUSContext* ctx, CString* module_name,
-                                        void* user_data) {
+                                        void* user_data, LEPUSValueConst attributes) {
+
   LEPUSRuntime* rt = LEPUS_GetRuntime(ctx);
   HakoModuleSource* module_source =
-      host_load_module(rt, ctx, module_name, user_data);
+        host_load_module(rt, ctx, module_name, user_data, &attributes);
 
   if (module_source == NULL) {
     LEPUS_ThrowTypeError(
@@ -1370,6 +1371,40 @@ void WASM_EXPORT(HAKO_RuntimeDisableInterruptHandler)(LEPUSRuntime* rt) {
   LEPUS_SetInterruptHandler(rt, NULL, NULL);
 }
 
+
+/* in order to conform with the specification, only the keys should be
+   tested and not the associated values. In level 2 support we'll expose this to the user.
+   */
+static int hako_module_check_attributes(LEPUSContext *ctx, void *opaque,
+                               LEPUSValueConst attributes)
+{
+    LEPUSPropertyEnum *tab;
+    uint32_t i, len;
+    int ret;
+    const char *cstr;
+    size_t cstr_len;
+
+    if (LEPUS_GetOwnPropertyNames(ctx, &tab, &len, attributes, LEPUS_GPN_ENUM_ONLY | LEPUS_GPN_STRING_MASK))
+        return -1;
+    ret = 0;
+    for(i = 0; i < len; i++) {
+        cstr = LEPUS_AtomToCStringLen(ctx, &cstr_len, tab[i].atom);
+        if (!cstr) {
+            ret = -1;
+            break;
+        }
+        if (!(cstr_len == 4 && !memcmp(cstr, "type", cstr_len))) {
+            LEPUS_ThrowTypeError(ctx, "import attribute '%s' is not supported", cstr);
+            ret = -1;
+        }
+        LEPUS_FreeCString(ctx, cstr);
+        if (ret)
+            break;
+    }
+    LEPUS_FreePropertyEnum(ctx, tab, len);
+    return ret;
+}
+
 void WASM_EXPORT(HAKO_RuntimeEnableModuleLoader)(
     LEPUSRuntime* rt, LEPUS_BOOL use_custom_normalize) {
   LEPUSModuleNormalizeFunc* module_normalize = NULL;
@@ -1377,11 +1412,11 @@ void WASM_EXPORT(HAKO_RuntimeEnableModuleLoader)(
     module_normalize = hako_normalize_module;
   }
   LEPUS_SetModuleLoaderFunc(rt, module_normalize, hako_load_module,
-                            hako_resolve_module, NULL);
+                            hako_resolve_module, hako_module_check_attributes, NULL);
 }
 
 void WASM_EXPORT(HAKO_RuntimeDisableModuleLoader)(LEPUSRuntime* rt) {
-  LEPUS_SetModuleLoaderFunc(rt, NULL, NULL, NULL, NULL);
+  LEPUS_SetModuleLoaderFunc(rt, NULL, NULL, NULL, NULL, NULL);
 }
 
 LEPUSValue* WASM_EXPORT(HAKO_bjson_encode)(LEPUSContext* ctx,
@@ -1763,4 +1798,17 @@ LEPUSValue* WASM_EXPORT(HAKO_NewObjectProtoClass)(LEPUSContext* ctx,
                                                   LEPUSValueConst* proto,
                                                   LEPUSClassID class_id) {
   return jsvalue_to_heap(ctx, LEPUS_NewObjectProtoClass(ctx, *proto, class_id));
+}
+
+void WASM_EXPORT(HAKO_SetModulePrivateValue)(LEPUSContext* ctx,
+                                              LEPUSModuleDef* module,
+                                              LEPUSValue* value) {
+
+  LEPUSValue new_value = LEPUS_DupValue(ctx, *value);
+  LEPUS_SetModulePrivateValue(ctx, module, new_value);
+}
+
+LEPUSValue* WASM_EXPORT(HAKO_GetModulePrivateValue)(LEPUSContext* ctx,
+                                                     LEPUSModuleDef* module) {
+  return jsvalue_to_heap(ctx, LEPUS_GetModulePrivateValue(ctx, module));
 }

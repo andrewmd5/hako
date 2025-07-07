@@ -1,9 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { VMContext } from "../src/vm/context";
-import { HakoRuntime } from "../src/runtime/runtime";
+import type { HakoRuntime } from "../src/runtime/runtime";
 import type { Container } from "../src/runtime/container";
 import type { HakoExports } from "../src/etc/ffi";
-import { createHakoRuntime, decodeVariant, HAKO_PROD, ModuleLoaderFunction } from "../src";
+import {
+  createHakoRuntime,
+  decodeVariant,
+  HAKO_PROD,
+  type ModuleLoaderFunction,
+} from "../src";
 import { VMValue } from "../src/vm/value";
 import type { MemoryManager } from "../src/mem/memory";
 import { DisposableResult } from "../src/mem/lifetime";
@@ -265,8 +270,8 @@ fibonacci(100);
       console.log("Performance API results:", performanceData);
 
       // Verify that the types are correct (should be numbers)
-      expect(performanceData.nowType).toEqual('number');
-      expect(performanceData.originType).toEqual('number');
+      expect(performanceData.nowType).toEqual("number");
+      expect(performanceData.originType).toEqual("number");
 
       // Verify that now() returns a small positive number (milliseconds since context creation)
       expect(performanceData.now).toBeGreaterThanOrEqual(0);
@@ -363,42 +368,45 @@ fibonacci(100);
       using global = context.getGlobalObject();
       using captureFunc = context.newFunction("capture", (value) => {
         capturedValue = value.asString();
-        console.log("Captured value:", capturedValue);
         return context.undefined();
       });
       global.setProperty("capture", captureFunc);
 
       // Create the C module with inline handler
-      const moduleBuilder = runtime.createCModule("my-c-module", (module) => {
-        console.log(`Init handler called for module: ${module.name}`);
-        initWasCalled = true;
+      const moduleBuilder = runtime
+        .createCModule("my-c-module", (module) => {
+          initWasCalled = true;
 
-        // Set the export value easily
-        module.setExport("greeting", "hello from C module");
+          // Set the export value easily
+          module.setExport("greeting", "hello from C module");
+          module.setExport("foo", module.getPrivateValue());
 
-        console.log(`Successfully initialized module: ${module.name}`);
-        return 0; // Success
-      }).addExport("greeting");
+          return 0; // Success
+        })
+        .addExport("greeting")
+        .addExport("foo");
 
-      console.log(`Created module: ${moduleBuilder.name}`);
-      console.log(`Module exports: ${moduleBuilder.exportNames.join(", ")}`);
+      moduleBuilder.setPrivateValue("bar");
+
       expect(moduleBuilder.pointer).not.toBe(0);
-      expect(moduleBuilder.exportNames).toEqual(["greeting"]);
+      expect(moduleBuilder.exportNames).toEqual(["greeting", "foo"]);
       expect(initWasCalled).toBe(false);
 
       // Set up module loader
-      runtime.enableModuleLoader((mn) => {
+      runtime.enableModuleLoader((mn, att) => {
         return { type: "precompiled", data: moduleBuilder.pointer };
       });
 
       // Import the module and capture the value
-      using result = context.evalCode(`
-      import { greeting } from 'my-c-module';
-      export const test = greeting;
-      capture(greeting);
-    `, { type: "module" });
-
-
+      using result = context.evalCode(
+        `
+        import { greeting, foo } from 'my-c-module';
+        export const test = greeting;
+        export const test2 = foo;
+        capture(greeting);
+      `,
+        { type: "module" }
+      );
 
       // Check that everything worked
       expect(initWasCalled).toBe(true);
@@ -411,8 +419,6 @@ fibonacci(100);
 
       // Verify module name
       expect(moduleBuilder.name).toBe("my-c-module");
-
-      console.log("Test completed successfully!");
     });
 
     it("should support multiple exports and functions", () => {
@@ -424,47 +430,56 @@ fibonacci(100);
       using captureFunc = context.newFunction("captureAll", (...values) => {
         values.forEach((value, index) => {
           capturedValues[`value${index}`] = value.asString();
-          console.log(`Captured value${index}:`, capturedValues[`value${index}`]);
         });
         return context.undefined();
       });
       global.setProperty("captureAll", captureFunc);
 
       // Create module with multiple exports and inline handler
-      const moduleBuilder = runtime.createCModule("multi-export-module", (module) => {
-        console.log(`Initializing module: ${module.name}`);
-        initWasCalled = true;
+      const moduleBuilder = runtime
+        .createCModule("multi-export-module", (module) => {
+          initWasCalled = true;
 
-        // Set multiple exports at once
-        module.setExports({
-          greeting: "Hello from C!",
-          version: "1.0.0",
-          count: 42,
-          isEnabled: true
-        });
+          // Set multiple exports at once
+          module.setExports({
+            greeting: "Hello from C!",
+            version: "1.0.0",
+            count: 42,
+            isEnabled: true,
+          });
 
-        // Set a function export
-        module.setFunction("add", (a, b) => {
-          return module.context.newNumber(a.asNumber() + b.asNumber());
-        });
+          // Set a function export
+          module.setFunction("add", (a, b) => {
+            return module.context.newNumber(a.asNumber() + b.asNumber());
+          });
 
-        return 0;
-      }).addExports(["greeting", "version", "count", "isEnabled", "add"]);
+          return 0;
+        })
+        .addExports(["greeting", "version", "count", "isEnabled", "add"]);
 
-      expect(moduleBuilder.exportNames).toEqual(["greeting", "version", "count", "isEnabled", "add"]);
+      expect(moduleBuilder.exportNames).toEqual([
+        "greeting",
+        "version",
+        "count",
+        "isEnabled",
+        "add",
+      ]);
 
       runtime.enableModuleLoader(() => {
-         return { type: "precompiled", data: moduleBuilder.pointer };
+        return { type: "precompiled", data: moduleBuilder.pointer };
       });
 
-      using result = context.evalCode(`
-      import { greeting, version, count, isEnabled, add } from 'multi-export-module';
-      
-      const sum = add(10, 20);
-      captureAll(greeting, version, count.toString(), isEnabled.toString(), sum.toString());
-      
-      export { greeting, version, count, isEnabled, sum };
-    `, { type: "module" });
+      using result = context.evalCode(
+        `
+        import { greeting, version, count, isEnabled, add } from 'multi-export-module';
+        
+        const sum = add(10, 20);
+        captureAll(greeting, version, count.toString(), isEnabled.toString(), sum.toString());
+        
+        export { greeting, version, count, isEnabled, sum };
+      `,
+        { type: "module" }
+      );
 
       expect(initWasCalled).toBe(true);
       expect(capturedValues.value0).toBe("Hello from C!");
@@ -477,9 +492,82 @@ fibonacci(100);
       expect(moduleBuilder.name).toBe("multi-export-module");
     });
 
+    it("should support JSON modules", () => {
+      let initWasCalled = false;
+
+      // Sample JSON data
+      const jsonData = {
+        name: "my-package",
+        version: "1.2.3",
+        dependencies: {
+          lodash: "^4.17.21",
+          react: "^18.0.0",
+        },
+        scripts: {
+          test: "jest",
+          build: "webpack",
+        },
+      };
+
+      let capturedData: typeof jsonData | null = null;
+
+      // Create capture function
+      using global = context.getGlobalObject();
+      using captureFunc = context.newFunction("captureJSON", (value) => {
+        using box = value.toNativeValue();
+        capturedData = box.value;
+        return context.undefined();
+      });
+      global.setProperty("captureJSON", captureFunc);
+
+      // Create JSON module
+      const moduleBuilder = runtime
+        .createCModule("package.json", (module) => {
+          initWasCalled = true;
+
+          // Export the JSON object as default export
+          module.setExport("default", module.getPrivateValue());
+
+          return 0;
+        })
+        .addExport("default");
+
+      // Parse JSON and set as private value
+      const parsedJson = JSON.parse(JSON.stringify(jsonData));
+      moduleBuilder.setPrivateValue(parsedJson);
+
+      expect(moduleBuilder.exportNames).toEqual(["default"]);
+
+      runtime.enableModuleLoader(() => {
+        return { type: "precompiled", data: moduleBuilder.pointer };
+      });
+
+      using result = context.evalCode(
+        `
+        import packageData from 'package.json' with { type: 'json' };
+        captureJSON(packageData);
+        export default packageData;
+      `,
+        { type: "module" }
+      );
+
+      expect(initWasCalled).toBe(true);
+      expect(capturedData).toBeDefined();
+
+      expect(capturedData!.name).toBe("my-package");
+      expect(capturedData!.version).toBe("1.2.3");
+      expect(capturedData!.dependencies).toEqual(parsedJson.dependencies);
+
+      // Verify the exported data structure
+      using namespace = result.unwrap();
+      using defaultExport = namespace.getProperty("default");
+      using nameProperty = defaultExport.getProperty("name");
+      expect(nameProperty.asString()).toBe("my-package");
+    });
+
     it("should support class exports", () => {
       let initWasCalled = false;
-      let capturedResults: string[] = [];
+      const capturedResults: string[] = [];
 
       // Create capture function
       using global = context.getGlobalObject();
@@ -490,62 +578,113 @@ fibonacci(100);
       global.setProperty("captureResult", captureFunc);
 
       // Create module with class export using the existing setClass method
-     using moduleBuilder = runtime.createCModule("class-module", (module) => {
-  initWasCalled = true;
-  
-  // Create the Point class with simple initialization
-  module.setClass("Point", "Point", (instance, args) => {
-    // Extract constructor arguments
-    const x = args[0]?.asNumber() || 0;
-    const y = args[1]?.asNumber() || 0;
-    
-    // Store coordinates as opaque data (pack x,y into single number)
-    const opaque = (x << 16) | (y & 0xFFFF);
-    instance.setOpaque(opaque);
-    
-    // No return needed - instance is handled automatically
-  }, {
-    methods: {
-      getX: function() {
-        // Extract x from opaque data
-        const opaque = this.getOpaque();
-        const x = (opaque >> 16) & 0xFFFF;
-  
-        return module.context.newNumber(x);
-      },
-      getY: function() {
-        // Extract y from opaque data  
-        const opaque = this.getOpaque();
-        const y = opaque & 0xFFFF;
-        return module.context.newNumber(y);
-      }
-    },
-  });
-  
-  return 0;
-}).addExport("Point");
+      using moduleBuilder = runtime
+        .createCModule("class-module", (module) => {
+          initWasCalled = true;
 
+          // Create the Point class with simple initialization
+          module.setClass(
+            "Point",
+            (instance, args) => {
+              // Extract constructor arguments
+              const x = args[0]?.asNumber() || 0;
+              const y = args[1]?.asNumber() || 0;
 
+              // Store coordinates as opaque data (pack x,y into single number)
+              const opaque = (x << 16) | (y & 0xffff);
+              instance.setOpaque(opaque);
 
-runtime.enableModuleLoader(() => {
-  return { type: "precompiled", data: moduleBuilder.pointer };
-});
+              // No return needed - instance is handled automatically
+            },
+            {
+              methods: {
+                getX: function () {
+                  // Extract x from opaque data
+                  const opaque = this.getOpaque();
+                  const x = (opaque >> 16) & 0xffff;
 
-using result = context.evalCode(`
-  import { Point } from 'class-module';
-  const p1 = new Point(10, 20);
-  const x = p1.getX();
-  const y = p1.getY();
-  captureResult(\`Point(\${x}, \${y})\`);
-  export { Point };
-`, { type: "module" });
+                  return module.context.newNumber(x);
+                },
+                getY: function () {
+                  // Extract y from opaque data
+                  const opaque = this.getOpaque();
+                  const y = opaque & 0xffff;
+                  return module.context.newNumber(y);
+                },
+              },
+            }
+          );
 
+          return 0;
+        })
+        .addExport("Point");
 
-using namespace = result.unwrap();
-expect(initWasCalled).toBe(true);
-expect(capturedResults[0]).toBe("Point(10, 20)");
+      runtime.enableModuleLoader(() => {
+        return { type: "precompiled", data: moduleBuilder.pointer };
+      });
+
+      using result = context.evalCode(
+        `
+        import { Point } from 'class-module';
+        const p1 = new Point(10, 20);
+        const x = p1.getX();
+        const y = p1.getY();
+        captureResult(\`Point(\${x}, \${y})\`);
+        export { Point };
+      `,
+        { type: "module" }
+      );
+
+      using namespace = result.unwrap();
+      expect(initWasCalled).toBe(true);
+      expect(capturedResults[0]).toBe("Point(10, 20)");
     });
 
+    it("should support class finalizer", () => {
+      let initWasCalled = false;
+      let finalizerCallCount = 0;
+
+      // Create module with class that has a finalizer
+      using moduleBuilder = runtime
+        .createCModule("finalizer-module", (module) => {
+          initWasCalled = true;
+
+          module.setClass(
+            "TestClass",
+            (instance) => {
+              // Allocate some memory and store as opaque
+              const memory = module.context.container.memory;
+              const ptr = memory.allocateString(module.context.pointer, "test");
+              instance.setOpaque(ptr);
+            },
+            {
+              finalizer: (runtime: HakoRuntime, opaque: number) => {
+                runtime.freeMemory(opaque);
+                finalizerCallCount++;
+              },
+            }
+          );
+
+          return 0;
+        })
+        .addExport("TestClass");
+
+      runtime.enableModuleLoader(() => {
+        return { type: "precompiled", data: moduleBuilder.pointer };
+      });
+
+      using result = context.evalCode(
+        `
+      import { TestClass } from 'finalizer-module';
+      const obj = new TestClass();
+      export { TestClass };
+    `,
+        { type: "module" }
+      );
+
+      expect(initWasCalled).toBe(true);
+      expect(finalizerCallCount).toBe(1);
+    });
   });
   describe("Value creation", () => {
     it("should create primitive values", () => {
@@ -650,7 +789,6 @@ expect(capturedResults[0]).toBe("Point(10, 20)");
 			`);
       using map = result.unwrap();
 
-
       for (using entriesBox of context.getIterator(map).unwrap()) {
         using entriesHandle = entriesBox.unwrap();
         using keyHandle = entriesHandle.getProperty(0).toNativeValue();
@@ -713,11 +851,6 @@ expect(capturedResults[0]).toBe("Point(10, 20)");
       expect(arrElem0?.asNumber()).toBe(1);
       expect(arrElem1?.asString()).toBe("two");
       expect(arrElem2?.asBoolean()).toBe(true);
-
-
-
-
-
     });
 
     it("should convert PrimJS values to JS values", () => {
@@ -782,7 +915,6 @@ expect(capturedResults[0]).toBe("Point(10, 20)");
   });
 
   describe("Promise handling", () => {
-
     it("should resolve already-settled async function promises without deadlocking", async () => {
       // This test reproduces the deadlock issue from the GitHub issue
       const code = `export const run = async (name) => { return "Hello" + name };`;
@@ -802,7 +934,6 @@ expect(capturedResults[0]).toBe("Point(10, 20)");
 
       // Verify it's a promise and already settled
       expect(promiseHandle.isPromise()).toBe(true);
-
 
       // Before the fix: this would deadlock because the promise is already settled
       // After the fix: this should resolve without blocking
@@ -894,7 +1025,6 @@ expect(capturedResults[0]).toBe("Point(10, 20)");
     });
   });
 
-
   describe("Module loading", () => {
     it("should load and execute a simple module", () => {
       // Setup a simple module loader with one module
@@ -916,17 +1046,16 @@ expect(capturedResults[0]).toBe("Point(10, 20)");
         if (!moduleContent) {
           return null;
         }
-        return { type: 'source', data: moduleContent };
+        return { type: "source", data: moduleContent };
       };
-      const resolver = ((moduleName: string, currentModule: string) => {
+      const resolver = (moduleName: string, currentModule: string) => {
         console.log(`Resolving module: ${moduleName} from ${currentModule}`);
         // For simplicity, just
         return moduleName;
-      });
+      };
       runtime.enableModuleLoader(loader, undefined, resolver);
 
       runtime.setStripInfo();
-
 
       // Test importing the module and creating a new function
       using result = context.evalCode(
@@ -1073,18 +1202,12 @@ expect(capturedResults[0]).toBe("Point(10, 20)");
       using compileResult = context.compileToByteCode(code, {
         type: "module",
         fileName: "test.mjs",
-
       });
       const bytecode = compileResult.unwrap();
-
-
 
       // Evaluate the module bytecode
       using evalResult = context.evalByteCode(bytecode);
       using moduleNamespace = evalResult.unwrap();
-
-
-
 
       // Check module exports
       using valueExport = moduleNamespace.getProperty("value");
@@ -1109,7 +1232,7 @@ expect(capturedResults[0]).toBe("Point(10, 20)");
 
       // Should auto-detect as module due to export statement
       using compileResult = context.compileToByteCode(moduleCode, {
-        detectModule: true
+        detectModule: true,
       });
       const bytecode = compileResult.unwrap();
 
@@ -1130,7 +1253,7 @@ expect(capturedResults[0]).toBe("Point(10, 20)");
 
       using compileResult = context.compileToByteCode(code, {
         fileName: "test.mjs",
-        detectModule: true
+        detectModule: true,
       });
       const bytecode = compileResult.unwrap();
 
@@ -1194,11 +1317,14 @@ expect(capturedResults[0]).toBe("Point(10, 20)");
     it("should work with async functions and promises", async () => {
       // Add a simple setTimeout implementation to the global scope
       using global = context.getGlobalObject();
-      using setTimeoutFunc = context.newFunction("setTimeout", (callback, delay) => {
-        // Simulate async behavior with immediate execution for testing
-        using result = context.callFunction(callback, null);
-        return context.undefined();
-      });
+      using setTimeoutFunc = context.newFunction(
+        "setTimeout",
+        (callback, delay) => {
+          // Simulate async behavior with immediate execution for testing
+          using result = context.callFunction(callback, null);
+          return context.undefined();
+        }
+      );
       global.setProperty("setTimeout", setTimeoutFunc);
 
       const code = `
@@ -1361,18 +1487,16 @@ expect(capturedResults[0]).toBe("Point(10, 20)");
             return x * x;
           }
           export const PI = 3.14159;
-        `
-        ]
+        `,
+        ],
       ]);
-
-
 
       runtime.enableModuleLoader((moduleName) => {
         const moduleContent = moduleMap.get(moduleName);
         if (!moduleContent) {
           return null;
         }
-        return { type: 'source', data: moduleContent };
+        return { type: "source", data: moduleContent };
       });
 
       const code = `
@@ -1383,7 +1507,7 @@ expect(capturedResults[0]).toBe("Point(10, 20)");
 
       using compileResult = context.compileToByteCode(code, {
         type: "module",
-        fileName: "main.mjs"
+        fileName: "main.mjs",
       });
       const bytecode = compileResult.unwrap();
 
@@ -1397,7 +1521,6 @@ expect(capturedResults[0]).toBe("Point(10, 20)");
       expect(squareExport?.isFunction()).toBe(true);
     });
 
-
     it("should export function declarations and have them available in module namespace", () => {
       const code = `
    export const value = 42;
@@ -1409,7 +1532,7 @@ expect(capturedResults[0]).toBe("Point(10, 20)");
 
       using compileResult = context.compileToByteCode(code, {
         type: "module",
-        fileName: "test-functions.mjs"
+        fileName: "test-functions.mjs",
       });
       const bytecode = compileResult.unwrap();
 
@@ -1461,13 +1584,12 @@ expect(capturedResults[0]).toBe("Point(10, 20)");
 
       using compileResult = context.compileToByteCode(code, {
         type: "module",
-        fileName: "test-functions-this.mjs"
+        fileName: "test-functions-this.mjs",
       });
       const bytecode = compileResult.unwrap();
 
       using evalResult = context.evalByteCode(bytecode);
       using moduleNamespace = evalResult.unwrap();
-
 
       // Check all exports are present
       using multiplyExport = moduleNamespace.getProperty("multiply");
@@ -1477,7 +1599,8 @@ expect(capturedResults[0]).toBe("Point(10, 20)");
       using getThisExport = moduleNamespace.getProperty("getThis");
       using getThisConstExport = moduleNamespace.getProperty("getThisConst");
       using getThisArrowExport = moduleNamespace.getProperty("getThisArrow");
-      using thisIsUndefinedExport = moduleNamespace.getProperty("thisIsUndefined");
+      using thisIsUndefinedExport =
+        moduleNamespace.getProperty("thisIsUndefined");
 
       // Verify types
       expect(multiplyExport?.isFunction()).toBe(true);
@@ -1492,9 +1615,6 @@ expect(capturedResults[0]).toBe("Point(10, 20)");
       using multiplyResult = context.callFunction(multiplyExport, null, arg);
       using multiplyValue = multiplyResult.unwrap();
       expect(multiplyValue.asNumber()).toBe(10);
-
-
-
     });
   });
 
@@ -1514,7 +1634,7 @@ expect(capturedResults[0]).toBe("Point(10, 20)");
 
     using compileResult = context.compileToByteCode(code, {
       type: "module",
-      fileName: "hoisting-test.mjs"
+      fileName: "hoisting-test.mjs",
     });
     const bytecode = compileResult.unwrap();
 
@@ -1559,7 +1679,7 @@ expect(capturedResults[0]).toBe("Point(10, 20)");
 
     using compileResult = context.compileToByteCode(code, {
       type: "global", // Explicitly non-module
-      fileName: "hoisting-script-test.js"
+      fileName: "hoisting-script-test.js",
     });
     const bytecode = compileResult.unwrap();
 
@@ -1611,7 +1731,7 @@ expect(capturedResults[0]).toBe("Point(10, 20)");
 
     using compileResult = context.compileToByteCode(code, {
       type: "global",
-      fileName: "class-static-init-test.js"
+      fileName: "class-static-init-test.js",
     });
     const bytecode = compileResult.unwrap();
 
@@ -1633,7 +1753,4 @@ expect(capturedResults[0]).toBe("Point(10, 20)");
     using classConstructor = result.getProperty("MyClass");
     expect(classConstructor.isFunction()).toBe(true);
   });
-
-
-
 });

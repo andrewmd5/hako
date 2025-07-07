@@ -21,7 +21,7 @@ import {
 } from "@hako/etc/types";
 import { VMValue } from "@hako/vm/value";
 import { DisposableResult, Scope } from "@hako/mem/lifetime";
-import { CModuleBuilder, CModuleInitializer } from "@hako/vm/cmodule";
+import { CModuleBuilder, type CModuleInitializer } from "@hako/vm/cmodule";
 
 /**
  * The HakoRuntime class represents a JavaScript execution environment.
@@ -91,7 +91,6 @@ export class HakoRuntime implements Disposable {
     return this.rtPtr;
   }
 
-
   /**
    * Creates a C module with inline handler registration
    */
@@ -100,7 +99,11 @@ export class HakoRuntime implements Disposable {
     handler: (initializer: CModuleInitializer) => number | void,
     ctx: VMContext | undefined = undefined
   ): CModuleBuilder {
-    return new CModuleBuilder(ctx ? ctx : this.getSystemContext(), name, handler);
+    return new CModuleBuilder(
+      ctx ? ctx : this.getSystemContext(),
+      name,
+      handler
+    );
   }
 
   /**
@@ -484,7 +487,10 @@ export class HakoRuntime implements Disposable {
    */
   executePendingJobs(maxJobsToExecute = -1): ExecutePendingJobsResult {
     // Allocate memory for the context output parameter
-    const ctxPtrOut = this.container.memory.allocateRuntimePointerArray(this.pointer, 1);
+    const ctxPtrOut = this.container.memory.allocateRuntimePointerArray(
+      this.pointer,
+      1
+    );
     const resultPtr = this.container.exports.HAKO_ExecutePendingJob(
       this.rtPtr,
       maxJobsToExecute,
@@ -566,6 +572,26 @@ export class HakoRuntime implements Disposable {
       this.container.exports.HAKO_FreeRuntime(this.rtPtr);
       this.isReleased = true;
     }
+  }
+
+  /**
+   * Allocates shared runtime memory.
+   * @param size - The size in bytes to allocate
+   * @returns The pointer to the allocated memory
+   */
+  allocateMemory(size: number): number {
+    if (this.isReleased) {
+      throw new Error("Cannot allocate memory on a released runtime");
+    }
+    return this.container.memory.allocateRuntimeMemory(this.pointer, size);
+  }
+
+  /**
+   * Frees previously allocated shared runtime memory.
+   * @param ptr - The pointer to the memory to free
+   */
+  freeMemory(ptr: number): void {
+    this.container.memory.freeRuntimeMemory(this.pointer, ptr);
   }
 
   /**

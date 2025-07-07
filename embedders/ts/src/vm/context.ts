@@ -165,7 +165,10 @@ export class VMContext implements Disposable {
     if (this.opaqueDataPointer) {
       this.freeOpaqueData();
     }
-    this.opaqueDataPointer = this.container.memory.allocateString(this.ctxPtr, opaque);
+    this.opaqueDataPointer = this.container.memory.allocateString(
+      this.ctxPtr,
+      opaque
+    );
     this.container.exports.HAKO_SetContextData(
       this.pointer,
       this.opaqueDataPointer
@@ -224,13 +227,19 @@ export class VMContext implements Disposable {
     if (code.length === 0) {
       return DisposableResult.success(this.undefined());
     }
-    const codemem = this.container.memory.writeNullTerminatedString(this.ctxPtr, code);
+    const codemem = this.container.memory.writeNullTerminatedString(
+      this.ctxPtr,
+      code
+    );
     let fileName = options.fileName || "file://eval";
     if (!fileName.startsWith("file://")) {
       fileName = `file://${fileName}`;
     }
 
-    const filenamePtr = this.container.memory.allocateString(this.ctxPtr, fileName);
+    const filenamePtr = this.container.memory.allocateString(
+      this.ctxPtr,
+      fileName
+    );
     const flags = evalOptionsToFlags(options);
     const detectModule = options.detectModule ?? false;
 
@@ -267,7 +276,6 @@ export class VMContext implements Disposable {
     }
   }
 
-
   /**
    * Compiles JavaScript code to portable bytecode.
    *
@@ -291,16 +299,25 @@ export class VMContext implements Disposable {
       return DisposableResult.success(new Uint8Array(0));
     }
 
-    const codemem = this.container.memory.writeNullTerminatedString(this.ctxPtr, code);
+    const codemem = this.container.memory.writeNullTerminatedString(
+      this.ctxPtr,
+      code
+    );
     let fileName = options.fileName || "eval";
     if (!fileName.startsWith("file://")) {
       fileName = `file://${fileName}`;
     }
 
-    const filemem = this.container.memory.writeNullTerminatedString(this.ctxPtr, fileName);
+    const filemem = this.container.memory.writeNullTerminatedString(
+      this.ctxPtr,
+      fileName
+    );
     const flags = evalOptionsToFlags(options);
     const detectModule = options.detectModule ?? true; // Default to true for compilation
-    const bytecodeLength = this.container.memory.allocatePointerArray(this.ctxPtr, 1);
+    const bytecodeLength = this.container.memory.allocatePointerArray(
+      this.ctxPtr,
+      1
+    );
 
     try {
       const bytecodePtr = this.container.exports.HAKO_CompileToByteCode(
@@ -316,7 +333,9 @@ export class VMContext implements Disposable {
       // Check if compilation failed (returns null)
       if (bytecodePtr === 0) {
         // Get the last error from the context
-        const exceptionPtr = this.container.error.getLastErrorPointer(this.ctxPtr);
+        const exceptionPtr = this.container.error.getLastErrorPointer(
+          this.ctxPtr
+        );
         if (exceptionPtr !== 0) {
           return DisposableResult.fail(
             new VMValue(this, exceptionPtr, ValueLifecycle.Owned),
@@ -330,15 +349,10 @@ export class VMContext implements Disposable {
         );
       }
 
-
       const length = this.container.memory.readPointer(bytecodeLength);
 
-
       // Copy the bytecode from WASM memory to a Uint8Array
-      const bytecode = this.container.memory.copy(
-        bytecodePtr,
-        length
-      );
+      const bytecode = this.container.memory.copy(bytecodePtr, length);
 
       // Free the bytecode buffer allocated by the C function
       this.container.memory.freeMemory(this.ctxPtr, bytecodePtr);
@@ -352,12 +366,12 @@ export class VMContext implements Disposable {
   }
 
   /**
-    * Evaluates precompiled JavaScript bytecode.
-    *
-    * @param bytecode - Bytecode buffer from compileToByteCode
-    * @param options - loadOnly: Only load bytecode without executing
-    * @returns Evaluation result or error
-    */
+   * Evaluates precompiled JavaScript bytecode.
+   *
+   * @param bytecode - Bytecode buffer from compileToByteCode
+   * @param options - loadOnly: Only load bytecode without executing
+   * @returns Evaluation result or error
+   */
   evalByteCode(
     bytecode: Uint8Array,
     options: { loadOnly?: boolean } = {}
@@ -450,9 +464,11 @@ export class VMContext implements Disposable {
 
       let argvPtr: number = 0;
 
-
       if (args.length > 0) {
-        argvPtr = this.container.memory.allocatePointerArray(this.ctxPtr, args.length);
+        argvPtr = this.container.memory.allocatePointerArray(
+          this.ctxPtr,
+          args.length
+        );
         scope.add(() => this.container.memory.freeMemory(this.ctxPtr, argvPtr));
 
         for (let i = 0; i < args.length; i++) {
@@ -602,11 +618,11 @@ export class VMContext implements Disposable {
       const lastError = isError
         ? pointer
         : this.container.error.getLastErrorPointer(
-          this.ctxPtr,
-          maybe_exception instanceof VMValue
-            ? maybe_exception.getHandle()
-            : maybe_exception
-        );
+            this.ctxPtr,
+            maybe_exception instanceof VMValue
+              ? maybe_exception.getHandle()
+              : maybe_exception
+          );
       if (lastError === 0) {
         return undefined;
       }
@@ -829,7 +845,10 @@ export class VMContext implements Disposable {
   }
 
   dump(value: VMValue): object {
-    const cstring = this.container.exports.HAKO_Dump(this.pointer, value.getHandle());
+    const cstring = this.container.exports.HAKO_Dump(
+      this.pointer,
+      value.getHandle()
+    );
     const result = this.container.memory.readString(cstring);
     this.container.memory.freeCString(this.pointer, cstring);
     return JSON.parse(result);
@@ -888,8 +907,13 @@ export class VMContext implements Disposable {
     // Use a scoped block to manage temporary allocations
     const deferredPromise = Scope.withScope((scope) => {
       // Allocate memory for the resolve/reject pointers
-      const resolveFuncsPtr = this.container.memory.allocatePointerArray(this.ctxPtr, 2);
-      scope.add(() => this.container.memory.freeMemory(this.ctxPtr, resolveFuncsPtr));
+      const resolveFuncsPtr = this.container.memory.allocatePointerArray(
+        this.ctxPtr,
+        2
+      );
+      scope.add(() =>
+        this.container.memory.freeMemory(this.ctxPtr, resolveFuncsPtr)
+      );
 
       // Create the promise capability by calling the native function
       const promisePtr = this.container.exports.HAKO_NewPromiseCapability(

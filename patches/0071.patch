@@ -1,0 +1,43 @@
+From 4eb4d37f4e006361f7dd9bd5a084b8630b474b5a Mon Sep 17 00:00:00 2001
+From: Andrew Sampson <andrew@Andrews-Mac-Studio.local>
+Date: Sun, 6 Jul 2025 20:12:20 +0900
+Subject: [PATCH] feat: added Error.isError()
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 2d2ee25..dee1f04 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -38359,6 +38359,16 @@ static const LEPUSCFunctionListEntry js_error_proto_funcs[] = {
+                           LEPUS_PROP_WRITABLE | LEPUS_PROP_CONFIGURABLE),
+ };
+ 
++static LEPUSValue js_error_isError(LEPUSContext *ctx, LEPUSValueConst this_val,
++                                int argc, LEPUSValueConst *argv)
++{
++    return LEPUS_NewBool(ctx, LEPUS_IsError(ctx, argv[0]));
++}
++
++static const LEPUSCFunctionListEntry js_error_funcs[] = {
++    LEPUS_CFUNC_DEF("isError", 1, js_error_isError),
++};
++
+ /* Array */
+ 
+ QJS_STATIC int JS_CopySubArray(LEPUSContext *ctx, LEPUSValueConst obj,
+@@ -53870,6 +53880,9 @@ void LEPUS_AddIntrinsicBaseObjects(LEPUSContext *ctx) {
+   JS_NewGlobalCConstructor2(ctx, obj1, "Error",
+                             ctx->class_proto[JS_CLASS_ERROR]);
+ 
++  LEPUS_SetPropertyFunctionList(ctx, obj1, js_error_funcs, 
++                             countof(js_error_funcs));
++
+   LEPUSCFunctionType ft = {.generic_magic = js_error_constructor};
+   for (i = 0; i < JS_NATIVE_ERROR_COUNT; i++) {
+     int n_args = 1 + (i == JS_AGGREGATE_ERROR);
+-- 
+2.45.2
+

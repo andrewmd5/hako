@@ -96,7 +96,6 @@ export const LEPUS_FALSE: LEPUS_BOOL = 0;
  */
 export const LEPUS_TRUE: LEPUS_BOOL = 1;
 
-
 export type LEPUSModuleDef = number;
 
 /**
@@ -135,20 +134,22 @@ export type HostCallbackFunction<VmHandle> = (
   // biome-ignore lint/suspicious/noConfusingVoidType: <explanation>
 ) => VmHandle | VmCallResult<VmHandle> | void;
 
-export type ModuleLoaderResult = 
-  | { type: 'source', data: string }           // Source code
-  | { type: 'precompiled', data: number }      // Pointer to LEPUSModuleDef
-  | { type: 'error' }                          // Module not found
-  | null;       
+export type ModuleLoaderResult =
+  | { type: "source"; data: string } // Source code
+  | { type: "precompiled"; data: number } // Pointer to LEPUSModuleDef
+  | { type: "error" } // Module not found
+  | null;
 
 /**
  * Function used to load JavaScript module source code.
  *
  * @param moduleName - The name of the module to load
+ * @param attributes - Import attributes object (e.g., { type: "json" })
  * @returns The module source code as a string, null if not found, or a Promise resolving to either
  */
 export type ModuleLoaderFunction = (
-  moduleName: string
+  moduleName: string,
+  attributes?: Record<string, string>
 ) => ModuleLoaderResult | Promise<ModuleLoaderResult>;
 
 /**
@@ -163,19 +164,17 @@ export type ModuleNormalizerFunction = (
   moduleName: string
 ) => string | Promise<string>;
 
-
 /**
  * Function used to resolve module names (import.meta.resolve).
- * 
+ *
  * @param moduleName - The module name to resolve
- * @param currentModule - The current module context 
+ * @param currentModule - The current module context
  * @returns The fully qualified path to the module, or undefined if not found
  */
 export type ModuleResolverFunction = (
   moduleName: string,
   currentModule?: string
 ) => string | undefined;
-
 
 /**
  * Function used to initialize a C module.
@@ -184,9 +183,7 @@ export type ModuleResolverFunction = (
  * @param module - The CModuleInitializer instance representing the module
  * @returns A status code indicating success (0) or failure (non-zero)
  */
-export type ModuleInitFunction = (
-  module: CModuleInitializer,
-) => number;
+export type ModuleInitFunction = (module: CModuleInitializer) => number;
 
 /**
  * Function used to finalize a C classes
@@ -203,7 +200,6 @@ export type ClassFinalizerHandler = (
   opaque: number,
   classId: number
 ) => void;
-
 
 export interface ClassOptions {
   finalizer?: ClassFinalizerHandler;
@@ -348,15 +344,15 @@ export enum Intrinsic {
   // Common sets of features
   /** Default set of features for most contexts */
   Default = BaseObjects |
-  Date |
-  Eval |
-  StringNormalize |
-  RegExp |
-  JSON |
-  MapSet |
-  TypedArrays |
-  Promise |
-  BigInt,
+    Date |
+    Eval |
+    StringNormalize |
+    RegExp |
+    JSON |
+    MapSet |
+    TypedArrays |
+    Promise |
+    BigInt,
   /** Minimal functionality (only BaseObjects) */
   Basic = BaseObjects,
   /** All available features */
@@ -626,7 +622,11 @@ export function evalOptionsToFlags(
     return EvalFlag.Global;
   }
 
-  if (evalOptions.type !== undefined && evalOptions.type !== "global" && evalOptions.type !== "module") {
+  if (
+    evalOptions.type !== undefined &&
+    evalOptions.type !== "global" &&
+    evalOptions.type !== "module"
+  ) {
     throw new PrimJSError(
       `Invalid eval type: ${evalOptions.type}. Must be "global" or "module".`
     );

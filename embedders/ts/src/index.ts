@@ -128,7 +128,6 @@ export async function createHakoRuntime<TOptions, TResponse>(
   const initialMemory = memConfig.initial || defaultInitialMemory;
   const maximumMemory = memConfig.maximum || defaultMaximumMemory;
 
-
   // Use BYOM (Bring Your Own Memory) or create a new one
   let wasmMemory: WebAssembly.Memory;
   if (memConfig.byom) {

@@ -1463,7 +1463,35 @@ JSVoid* HAKO_GetOpaque(LEPUSContext* ctx, LEPUSValueConst* obj,
 LEPUSValue* HAKO_NewObjectProtoClass(LEPUSContext* ctx, LEPUSValueConst* proto,
                                      LEPUSClassID class_id);
 
-LEPUS_BOOL HAKO_IsRegisteredClass(LEPUSRuntime* rt, LEPUSClassID class_id);
+
+
+/**
+ * @brief Sets a private value associated with a module
+ * @category Module Creation
+ *
+ * @param ctx Context to use
+ * @param module Module to set private value on
+ * @param value Value to associate with the module
+ * @tsparam ctx JSContextPointer
+ * @tsparam module LEPUSModuleDef
+ * @tsparam value JSValuePointer
+ */
+void HAKO_SetModulePrivateValue(LEPUSContext* ctx,
+                                LEPUSModuleDef* module,
+                                LEPUSValue* value);
+
+/**
+ * @brief Gets the private value associated with a module
+ * @category Module Creation
+ *
+ * @param ctx Context to use
+ * @param module Module to get private value from
+ * @return LEPUSValue* - Private value associated with the module
+ * @tsparam ctx JSContextPointer
+ * @tsparam module LEPUSModuleDef
+ * @tsreturn JSValuePointer
+ */
+LEPUSValue* HAKO_GetModulePrivateValue(LEPUSContext* ctx, LEPUSModuleDef* module);
 
 #ifdef HAKO_DEBUG_MODE
 #define HAKO_LOG(msg) hako_log(msg)

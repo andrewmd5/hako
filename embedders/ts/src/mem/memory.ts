@@ -169,7 +169,10 @@ export class MemoryManager {
     return memory.subarray(offset, offset + length);
   }
 
-  writeNullTerminatedString(ctx: JSContextPointer, str: string): { pointer: CString; length: number } {
+  writeNullTerminatedString(
+    ctx: JSContextPointer,
+    str: string
+  ): { pointer: CString; length: number } {
     const exports = this.checkExports();
     const bytes = this.encoder.encode(str);
     const ptr = this.allocateMemory(ctx, bytes.byteLength + 1);
@@ -177,9 +180,7 @@ export class MemoryManager {
     memory.set(bytes, ptr);
     memory[ptr + bytes.length] = 0; // Null terminator
     return { pointer: ptr, length: bytes.length + 1 };
-
   }
-
 
   /**
    * Reads a null-terminated C string from the WebAssembly heap.
@@ -243,7 +244,6 @@ export class MemoryManager {
     }
   }
 
-
   /**
    * Duplicates a JavaScript value pointer.
    *
@@ -281,7 +281,6 @@ export class MemoryManager {
     memory.set(data, bufPtr);
     return exports.HAKO_NewArrayBuffer(ctx, bufPtr, data.byteLength);
   }
-
 
   /**
    * Allocates memory for an array of pointers.
