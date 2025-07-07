@@ -7,8 +7,12 @@
   "exports": {
     "./biome": "./biome.json",
     ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "import": "./dist/esm/index.js",
+      "types": "./dist/types/index.d.ts"
+    },
+    "./*": {
+      "import": "./dist/esm/*.js",
+      "types": "./dist/types/*.d.ts"
     }
   },
   "sideEffects": false,
@@ -16,15 +20,15 @@
     "dist"
   ],
   "scripts": {
-    "build": "node --experimental-strip-types build.ts && tsc --outDir ./dist && tsc-alias -p tsconfig.json",
-    "dev": "esbuild src/index.ts --bundle --format=esm --outdir=dist --watch",
+    "build": "bun run build.ts",
+    "dev": "bun run build.ts --watch",
     "test": "vitest run",
     "test:watch": "vitest",
-    "format": "biome format --write",
+    "format": "biome format --write --unsafe .",
     "lint": "biome lint --error-on-warnings",
-    "lint:fix": "biome lint --fix",
-    "generate:version": "node --experimental-strip-types tools/update-verison.ts",
-    "generate:builds": "node --experimental-strip-types tools/generate-builds.ts"
+    "lint:fix": "biome lint --write ./src",
+    "generate:version": "bun tools/update-verison.ts",
+    "generate:builds": "bun tools/generate-builds.ts"
   },
   "keywords": [
     "javascript-engine",
@@ -57,13 +61,11 @@
   "license": "Apache-2.0",
   "devDependencies": {
     "@types/node": "22.13.14",
-    "esbuild": "0.25.1",
-    "tsc-alias": "1.8.15",
     "typescript": "5.8.2",
-    "vitest": "3.0.9",
     "zx": "8.5.2"
   },
   "dependencies": {
+    "@types/bun": "^1.2.18",
     "uwasi": "1.4.1"
   }
 }

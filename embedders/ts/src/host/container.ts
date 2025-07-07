@@ -1,8 +1,8 @@
-import type { HakoExports } from "@hako/etc/ffi";
-import type { MemoryManager } from "@hako/mem/memory";
-import { ErrorManager } from "@hako/etc/errors";
-import { Utils } from "@hako/etc/utils";
-import type { CallbackManager } from "@hako/runtime/callback";
+import { ErrorManager } from "../etc/errors";
+import type { HakoExports } from "../etc/ffi";
+import { Utils } from "../etc/utils";
+import type { MemoryManager } from "../mem/memory";
+import type { CallbackManager } from "./callback";
 
 /**
  * Central service container that holds and initializes all core PrimJS wrapper components.

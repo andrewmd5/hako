@@ -1,6 +1,6 @@
-import type { VMContext } from "@hako/vm/context";
-import type { HakoRuntime } from "@hako/runtime/runtime";
-import type { VMValue } from "@hako/vm/value";
+import type { HakoRuntime } from "../host/runtime";
+import type { VMContext } from "../vm/context";
+import type { VMValue } from "../vm/value";
 
 /**
  * Represents a Promise in the "pending" state.

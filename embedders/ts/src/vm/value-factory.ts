@@ -1,12 +1,12 @@
-import type { Container } from "@hako/runtime/container";
-import type { VMContext } from "@hako/vm/context";
+import { HakoError } from "../etc/errors";
 import {
   detectCircularReferences,
-  ValueLifecycle,
   type HostCallbackFunction,
-} from "@hako/etc/types";
-import { VMValue } from "@hako/vm/value";
-import { HakoError } from "@hako/etc/errors";
+  ValueLifecycle,
+} from "../etc/types";
+import type { Container } from "../host/container";
+import type { VMContext } from "./context";
+import { VMValue } from "./value";
 
 /**
  * Factory class for creating JavaScript values in the PrimJS virtual machine.
@@ -14,7 +14,6 @@ import { HakoError } from "@hako/etc/errors";
  * ValueFactory converts JavaScript values from the host environment into
  * their corresponding representations in the PrimJS VM. It handles all primitive
  * and complex types, with special handling for objects, functions, and errors.
- * The factory also caches commonly used primitive values for efficiency.
  *
  * @implements {Disposable} - Implements the Disposable interface for resource cleanup
  */
@@ -30,16 +29,6 @@ export class ValueFactory implements Disposable {
    * @private
    */
   private container: Container;
-
-  /**
-   * Cached references to static primitive values for efficiency
-   * @private
-   */
-  private cachedUndefined: VMValue | null = null;
-  private cachedNull: VMValue | null = null;
-  private cachedTrue: VMValue | null = null;
-  private cachedFalse: VMValue | null = null;
-  private cachedGlobalObject: VMValue | null = null;
 
   /**
    * Creates a new ValueFactory instance.
@@ -224,45 +213,33 @@ export class ValueFactory implements Disposable {
   /**
    * Creates a VM undefined value.
    *
-   * Uses a cached value for efficiency.
-   *
    * @returns A VM undefined value
    * @private
    */
   private createUndefined(): VMValue {
-    if (!this.cachedUndefined) {
-      this.cachedUndefined = new VMValue(
-        this.context,
-        this.container.exports.HAKO_GetUndefined(),
-        ValueLifecycle.Borrowed
-      );
-    }
-    return this.cachedUndefined;
+    return new VMValue(
+      this.context,
+      this.container.exports.HAKO_GetUndefined(),
+      ValueLifecycle.Borrowed
+    );
   }
 
   /**
    * Creates a VM null value.
    *
-   * Uses a cached value for efficiency.
-   *
    * @returns A VM null value
    * @private
    */
   private createNull(): VMValue {
-    if (!this.cachedNull) {
-      this.cachedNull = new VMValue(
-        this.context,
-        this.container.exports.HAKO_GetNull(),
-        ValueLifecycle.Borrowed
-      );
-    }
-    return this.cachedNull;
+    return new VMValue(
+      this.context,
+      this.container.exports.HAKO_GetNull(),
+      ValueLifecycle.Borrowed
+    );
   }
 
   /**
    * Creates a VM boolean value.
-   *
-   * Uses cached values for true and false for efficiency.
    *
    * @param value - The JavaScript boolean value
    * @returns A VM boolean value
@@ -270,24 +247,18 @@ export class ValueFactory implements Disposable {
    */
   private createBoolean(value: boolean): VMValue {
     if (value === true) {
-      if (!this.cachedTrue) {
-        this.cachedTrue = new VMValue(
-          this.context,
-          this.container.exports.HAKO_GetTrue(),
-          ValueLifecycle.Borrowed
-        );
-      }
-      return this.cachedTrue;
-    }
-
-    if (!this.cachedFalse) {
-      this.cachedFalse = new VMValue(
+      return new VMValue(
         this.context,
-        this.container.exports.HAKO_GetFalse(),
+        this.container.exports.HAKO_GetTrue(),
         ValueLifecycle.Borrowed
       );
     }
-    return this.cachedFalse;
+
+    return new VMValue(
+      this.context,
+      this.container.exports.HAKO_GetFalse(),
+      ValueLifecycle.Borrowed
+    );
   }
 
   /**
@@ -313,12 +284,15 @@ export class ValueFactory implements Disposable {
    * @private
    */
   private createString(value: string): VMValue {
-    const strPtr = this.container.memory.allocateString(value);
+    const strPtr = this.container.memory.allocateString(
+      this.context.pointer,
+      value
+    );
     const jsStrPtr = this.container.exports.HAKO_NewString(
       this.context.pointer,
       strPtr
     );
-    this.container.memory.freeMemory(strPtr);
+    this.container.memory.freeMemory(this.context.pointer, strPtr);
     return new VMValue(this.context, jsStrPtr, ValueLifecycle.Owned);
   }
 
@@ -453,23 +427,17 @@ export class ValueFactory implements Disposable {
       buffer = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
     }
 
-    // Allocate memory for the buffer and copy data
-    const bufferPtr = this.container.memory.allocateMemory(buffer.byteLength);
-    const bufferView = new Uint8Array(
-      this.container.exports.memory.buffer,
-      bufferPtr,
-      buffer.byteLength
-    );
-    bufferView.set(buffer);
-
-    // Create JSValue ArrayBuffer
-    const arrayBufferPtr = this.container.exports.HAKO_NewArrayBuffer(
+    const valuePtr = this.container.memory.newArrayBuffer(
       this.context.pointer,
-      bufferPtr,
-      buffer.byteLength
+      buffer
     );
 
-    return new VMValue(this.context, arrayBufferPtr, ValueLifecycle.Owned);
+    const lastError = this.context.getLastError(valuePtr);
+    if (lastError) {
+      this.container.memory.freeValuePointer(this.context.pointer, valuePtr);
+      throw lastError;
+    }
+    return new VMValue(this.context, valuePtr, ValueLifecycle.Owned);
   }
 
   /**
@@ -507,7 +475,7 @@ export class ValueFactory implements Disposable {
 
     // Add all properties from the source object
     for (const key in value) {
-      if (Object.prototype.hasOwnProperty.call(value, key)) {
+      if (Object.hasOwn(value, key)) {
         using propValue = this.fromNativeValue(value[key]);
         if (propValue) {
           jsObj.setProperty(key, propValue);
@@ -521,38 +489,24 @@ export class ValueFactory implements Disposable {
   /**
    * Gets the global object from the VM context.
    *
-   * Uses a cached value for efficiency, refreshing it if no longer valid.
-   *
    * @returns The VM global object
    */
   public getGlobalObject(): VMValue {
-    if (!this.cachedGlobalObject || !this.cachedGlobalObject.alive) {
-      this.cachedGlobalObject = new VMValue(
-        this.context,
-        this.container.exports.HAKO_GetGlobalObject(this.context.pointer),
-        ValueLifecycle.Owned
-      );
-    }
-    return this.cachedGlobalObject;
+    return new VMValue(
+      this.context,
+      this.container.exports.HAKO_GetGlobalObject(this.context.pointer),
+      ValueLifecycle.Owned
+    );
   }
 
   /**
-   * Disposes of all cached values and resources.
+   * Disposes of all resources.
    *
-   * Note: There appears to be a typo in the method name ('dipose' vs 'dispose').
-   * This documentation uses the original name for consistency.
+   * Since caching has been removed, this method is now a no-op
+   * but is kept for interface compatibility.
    */
-  public dipose(): void {
-    this.cachedGlobalObject?.dispose();
-    this.cachedGlobalObject = null;
-    this.cachedUndefined?.dispose();
-    this.cachedUndefined = null;
-    this.cachedNull?.dispose();
-    this.cachedNull = null;
-    this.cachedTrue?.dispose();
-    this.cachedTrue = null;
-    this.cachedFalse?.dispose();
-    this.cachedFalse = null;
+  public dispose(): void {
+    // No cached values to dispose of anymore
   }
 
   /**
@@ -562,6 +516,6 @@ export class ValueFactory implements Disposable {
    * in environments that support the Disposable pattern.
    */
   [Symbol.dispose](): void {
-    this.dipose();
+    this.dispose();
   }
 }

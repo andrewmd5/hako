@@ -1,18 +1,31 @@
 {
-  "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
-  "organizeImports": {
-    "enabled": true
+  "$schema": "https://biomejs.dev/schemas/2.0.6/schema.json",
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
   },
   "linter": {
-    "ignore": ["tests", "src/variants/**/*.*", "node_modules/**/*.*", "dist/**/*.*"],
+    "includes": [
+      "src/**/*.js",
+      "src/**/*.ts",
+      "!tests/**/*.js",
+      "!tests/**/*.ts"
+    ],
     "enabled": true,
     "rules": {
       "recommended": true
     }
   },
   "formatter": {
-    "include": ["src/**/*.js", "src/**/*.ts", "tests/**/*.js", "tests/**/*.ts"],
-    "ignore": ["node_modules/**/*.*", "dist/**/*.*", "src/variants/**/*.*"],
+    "includes": [
+      "src/**/*.js",
+      "src/**/*.ts",
+      "tests/**/*.js",
+      "tests/**/*.ts"
+    ],
     "enabled": true,
     "indentWidth": 2,
     "indentStyle": "space"
@@ -23,5 +36,8 @@
       "trailingCommas": "es5",
       "semicolons": "always"
     }
+  },
+  "files": {
+    "includes": ["src/**/*", "tests/**/*", "!src/variants/**/*"]
   }
 }

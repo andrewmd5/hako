@@ -1,26 +1,17 @@
-// Build script for the library
-import { build } from "esbuild";
-import { existsSync, mkdirSync } from "node:fs";
+import { Glob, $ } from "bun"
+import pkg from "./package.json"
 
-if (!existsSync("./dist")) {
-  mkdirSync("./dist");
-}
-
-console.log("🔨 Building library...");
-
-try {
-  await build({
-    entryPoints: ["src/index.ts"],
-    outdir: "dist",
-    bundle: true,
+await $`rm -rf dist`
+const files = new Glob("./src/**/*.{ts,tsx}").scan()
+for await (const file of files) {
+  await Bun.build({
     format: "esm",
-    sourcemap: true,
-    minify: false,
-    platform: "neutral",
-    target: "esnext"
-  });
-  console.log("✅ Build completed successfully!");
-} catch (error) {
-  console.error("❌ Build failed:", error);
-  process.exit(1);
+    outdir: "dist/esm",
+    external: ["*"],
+    root: "src",
+    entrypoints: [file],
+    sourcemap: "linked"
+  })
 }
+
+await $`bun tsc --outDir dist/types --declaration --emitDeclarationOnly --declarationMap`

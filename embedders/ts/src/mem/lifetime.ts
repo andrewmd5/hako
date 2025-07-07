@@ -1,8 +1,5 @@
-import {
-  maybeAsync,
-  type MaybeAsyncBlock,
-} from "@hako/helpers/asyncify-helpers";
-import type { SuccessOrFail } from "@hako/vm/vm-interface";
+import { type MaybeAsyncBlock, maybeAsync } from "../helpers/asyncify-helpers";
+import type { SuccessOrFail } from "../vm/vm-interface";
 /**
  * A container for native values that need deterministic cleanup.
  *
@@ -51,8 +48,7 @@ function isDisposable(
       "dispose" in value &&
       typeof value.dispose === "function" &&
       "alive" in value &&
-      // biome-ignore lint/suspicious/noExplicitAny: <explanation>
-      typeof (value as unknown as any).alive === "boolean"
+      typeof value.alive === "boolean"
   );
 }
 

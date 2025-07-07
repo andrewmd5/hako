@@ -1,20 +1,18 @@
-import type { HakoExports } from "@hako/etc/ffi";
-import { HakoError, PrimJSUseAfterFree } from "@hako/etc/errors";
+import { HakoError, PrimJSUseAfterFree } from "../etc/errors";
+import type { HakoExports } from "../etc/ffi";
 import {
-  type JSValuePointer,
-  ValueLifecycle,
-  type PropertyDescriptor,
-  PropertyEnumFlags,
   EqualOp,
-  type PromiseState,
   IsEqualOp,
-  LEPUS_BOOLToBoolean,
   type JSType,
-  type OwnedHeapChar,
+  type JSValuePointer,
+  LEPUS_BOOLToBoolean,
+  type PromiseState,
+  PropertyEnumFlags,
   type TypedArrayType,
-} from "@hako/etc/types";
-import type { VMContext } from "@hako/vm/context";
-import { type NativeBox, Scope } from "@hako/mem/lifetime";
+  ValueLifecycle,
+} from "../etc/types";
+import { type NativeBox, Scope } from "../mem/lifetime";
+import type { VMContext } from "./context";
 
 /**
  * Represents a JavaScript value within the PrimJS virtual machine.
@@ -170,18 +168,29 @@ export class VMValue implements Disposable {
    * @returns The JavaScript type as a string
    */
   private getValueType(): JSType {
-    const typePtr: OwnedHeapChar = this.context.container.exports.HAKO_Typeof(
+    const type: number = this.context.container.exports.HAKO_TypeOf(
       this.context.pointer,
       this.handle
     );
-    try {
-      if (typePtr === 0) {
-        return "unknown";
-      }
-      const typeStr = this.context.container.memory.readString(typePtr);
-      return typeStr as JSType;
-    } finally {
-      this.context.container.memory.freeMemory(typePtr);
+    switch (type) {
+      case 0:
+        return "undefined";
+      case 1:
+        return "object";
+      case 2:
+        return "string";
+      case 3:
+        return "symbol";
+      case 4:
+        return "boolean";
+      case 5:
+        return "number";
+      case 6:
+        return "bigint";
+      case 7:
+        return "function";
+      default:
+        return "undefined";
     }
   }
 
@@ -193,6 +202,7 @@ export class VMValue implements Disposable {
    */
   get type(): JSType {
     this.assertAlive();
+    if (this.isNull()) return "object"; // Special case for null
     return this.getValueType();
   }
 
@@ -247,11 +257,8 @@ export class VMValue implements Disposable {
    */
   isNull(): boolean {
     this.assertAlive();
-    return this.context.container.utils.isEqual(
-      this.context.pointer,
-      this.handle,
-      this.context.container.exports.HAKO_GetNull(),
-      EqualOp.StrictEquals
+    return LEPUS_BOOLToBoolean(
+      this.context.container.exports.HAKO_IsNull(this.handle)
     );
   }
 
@@ -358,8 +365,8 @@ export class VMValue implements Disposable {
         return "Uint32Array";
       case 7:
         return "Int32Array";
-        case 8:
-         return "BigInt64Array";
+      case 8:
+        return "BigInt64Array";
       case 9:
         return "BigUint64Array";
       case 10:
@@ -512,13 +519,19 @@ export class VMValue implements Disposable {
       }
       let keyPtr: number;
       if (typeof key === "string") {
-        const keyStrPtr = this.context.container.memory.allocateString(key);
+        const keyStrPtr = this.context.container.memory.allocateString(
+          this.context.pointer,
+          key
+        );
         keyPtr = this.context.container.exports.HAKO_NewString(
           this.context.pointer,
           keyStrPtr
         );
         scope.add(() => {
-          this.context.container.memory.freeMemory(keyStrPtr);
+          this.context.container.memory.freeMemory(
+            this.context.pointer,
+            keyStrPtr
+          );
           this.context.container.memory.freeValuePointer(
             this.context.pointer,
             keyPtr
@@ -710,12 +723,18 @@ export class VMValue implements Disposable {
     let outPtrsBase: number | null = null;
     let outLen = 0;
 
-    const outPtrPtr = this.context.container.memory.allocatePointerArray(2);
-    const outLenPtr = this.context.container.memory.allocateMemory(4);
+    const outPtrPtr = this.context.container.memory.allocatePointerArray(
+      this.context.pointer,
+      2
+    );
+    const outLenPtr = this.context.container.memory.allocateMemory(
+      this.context.pointer,
+      4
+    );
 
     scope.add(() => {
-      this.context.container.memory.freeMemory(outPtrPtr);
-      this.context.container.memory.freeMemory(outLenPtr);
+      this.context.container.memory.freeMemory(this.context.pointer, outPtrPtr);
+      this.context.container.memory.freeMemory(this.context.pointer, outLenPtr);
     });
 
     this.context.container.memory.writeUint32(outLenPtr, 1000);
@@ -748,7 +767,7 @@ export class VMValue implements Disposable {
       );
       try {
         yield new VMValue(this.context, valuePtr, ValueLifecycle.Owned);
-      } catch (e) {
+      } catch (_e) {
         // Clean up any remaining value pointers if iteration is aborted
         for (let i = currentIndex; i < outLen; i++) {
           const unyieldedValuePtr =
@@ -763,7 +782,10 @@ export class VMValue implements Disposable {
     }
 
     if (outPtrsBase !== null) {
-      this.context.container.memory.freeMemory(outPtrsBase);
+      this.context.container.memory.freeMemory(
+        this.context.pointer,
+        outPtrsBase
+      );
     }
     scope.release();
   }
@@ -780,10 +802,12 @@ export class VMValue implements Disposable {
     if (!this.isPromise()) {
       throw new Error("Value is not a promise");
     }
-    switch (this.context.container.exports.HAKO_PromiseState(
-      this.context.pointer,
-      this.handle
-    )) {
+    switch (
+      this.context.container.exports.HAKO_PromiseState(
+        this.context.pointer,
+        this.handle
+      )
+    ) {
       case 0:
         return "pending";
       case 1:
@@ -792,7 +816,6 @@ export class VMValue implements Disposable {
         return "rejected";
       default:
         return undefined;
-
     }
   }
 
@@ -930,8 +953,6 @@ export class VMValue implements Disposable {
       switch (type) {
         case "undefined":
           return createResult(undefined);
-        case "null":
-          return createResult(null);
         case "boolean":
           return createResult(this.asBoolean());
         case "number":
@@ -943,11 +964,15 @@ export class VMValue implements Disposable {
         case "bigint":
           return createResult(BigInt(this.asString()));
         case "object": {
+          if (this.isNull()) {
+            return createResult(null);
+          }
           if (this.isArray()) {
             const length = this.getLength();
             const result = [];
             for (let i = 0; i < length; i++) {
               const item = this.getProperty(i).toNativeValue();
+
               disposables.push(item);
               result.push(item.value);
             }
@@ -1024,9 +1049,12 @@ export class VMValue implements Disposable {
       throw new TypeError("Value is not a Uint8Array");
     }
     return Scope.withScope((scope) => {
-      const pointer = this.context.container.memory.allocatePointerArray(1);
+      const pointer = this.context.container.memory.allocatePointerArray(
+        this.context.pointer,
+        1
+      );
       scope.add(() => {
-        this.context.container.memory.freeMemory(pointer);
+        this.context.container.memory.freeMemory(this.context.pointer, pointer);
       });
 
       const bufPtr = this.context.container.exports.HAKO_CopyTypedArrayBuffer(
@@ -1046,7 +1074,7 @@ export class VMValue implements Disposable {
         0
       );
       scope.add(() => {
-        this.context.container.memory.freeMemory(bufPtr);
+        this.context.container.memory.freeMemory(this.context.pointer, bufPtr);
       });
       return new Uint8Array(this.context.container.exports.memory.buffer).slice(
         bufPtr,
@@ -1071,9 +1099,12 @@ export class VMValue implements Disposable {
       throw new TypeError("Value is not an ArrayBuffer");
     }
     return Scope.withScope((scope) => {
-      const pointer = this.context.container.memory.allocatePointerArray(1);
+      const pointer = this.context.container.memory.allocatePointerArray(
+        this.context.pointer,
+        1
+      );
       scope.add(() => {
-        this.context.container.memory.freeMemory(pointer);
+        this.context.container.memory.freeMemory(this.context.pointer, pointer);
       });
 
       const bufPtr = this.context.container.exports.HAKO_CopyArrayBuffer(
@@ -1088,17 +1119,26 @@ export class VMValue implements Disposable {
           throw error;
         }
       }
-      const length = this.context.container.memory.readPointerFromArray(
-        pointer,
-        0
-      );
+
+      const length = this.context.container.memory.readPointer(pointer);
+
+      if (length === 0) {
+        return new ArrayBuffer(0);
+      }
+
       scope.add(() => {
-        this.context.container.memory.freeMemory(bufPtr);
+        this.context.container.memory.freeMemory(this.context.pointer, bufPtr);
       });
-      const mem = new Uint8Array(
-        this.context.container.exports.memory.buffer
-      ).slice(bufPtr, bufPtr + length);
-      return mem.buffer;
+
+      // Get the memory slice from the WASM buffer
+      const mem = this.context.container.memory.slice(bufPtr, length);
+
+      // Create a new ArrayBuffer and copy the data
+      const result = new ArrayBuffer(length);
+      const resultView = new Uint8Array(result);
+      resultView.set(mem);
+
+      return result;
     });
   }
 
@@ -1110,13 +1150,15 @@ export class VMValue implements Disposable {
    */
   dispose(): void {
     if (!this.alive) return;
-    if (this.handle !== 0 && this.lifecycle === ValueLifecycle.Owned) {
-      this.context.container.memory.freeValuePointer(
-        this.context.pointer,
-        this.handle
-      );
+    if (this.lifecycle === ValueLifecycle.Borrowed) {
       this.handle = 0;
+      return;
     }
+    this.context.container.memory.freeValuePointer(
+      this.context.pointer,
+      this.handle
+    );
+    this.handle = 0;
   }
 
   /**
@@ -1176,11 +1218,35 @@ export class VMValue implements Disposable {
    */
   classId(): number {
     this.assertAlive();
-    const classId = this.context.container.exports.HAKO_GetClassID(
+    return this.context.container.exports.HAKO_GetClassID(this.handle);
+  }
+
+  getOpaque(): number {
+    this.assertAlive();
+
+    const result = this.context.container.exports.HAKO_GetOpaque(
       this.context.pointer,
-      this.handle
+      this.handle,
+      this.classId()
     );
-    return classId;
+    if (this.context.getLastError()) {
+      throw this.context.getLastError();
+    }
+    return result;
+  }
+
+  setOpaque(opaque: number): void {
+    this.assertAlive();
+    this.context.container.exports.HAKO_SetOpaque(this.handle, opaque);
+  }
+
+  freeOpaque(): void {
+    this.assertAlive();
+    const opaque = this.getOpaque();
+    if (opaque !== 0) {
+      this.context.container.exports.HAKO_Free(this.context.pointer, opaque);
+      this.setOpaque(0);
+    }
   }
 
   /**

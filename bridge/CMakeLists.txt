@@ -2,6 +2,11 @@ cmake_minimum_required(VERSION 4.0.0)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(HAVE_FLAG_SEARCH_PATHS_FIRST 0)
 
+set(CMAKE_C_STANDARD 17)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 # Get WASI SDK path from environment - require it to be set
 if(DEFINED ENV{WASI_SDK_PATH})
   set(WASI_SDK_PATH $ENV{WASI_SDK_PATH})
@@ -94,11 +99,12 @@ option(ENABLE_ATOMICS "Enable Atomics" OFF)
 option(FORCE_GC "Enable force gc" OFF)
 option(ENABLE_ASAN "Enable address sanitizer" OFF)
 option(ENABLE_BIGNUM "Enable bignum" OFF)
-option(WASM_INITIAL_MEMORY "Initial memory size in bytes" "25165824")  # 24MB default
-option(WASM_MAX_MEMORY "Maximum memory size in bytes" "268435456") # 256MB default
-option(WASM_STACK_SIZE "Stack size in bytes" "8388608")  # 8MB default
-option(WASM_OUTPUT_NAME "Output name for the WASM file" "hako.wasm")
 
+
+set(WASM_OUTPUT_NAME "hako.wasm" CACHE STRING "Output name for the WASM file")
+set(WASM_MAX_MEMORY "268435456" CACHE STRING "Maximum memory size in bytes")
+set(WASM_INITIAL_MEMORY "25165824" CACHE STRING "Initial memory size in bytes")
+set(WASM_STACK_SIZE "8388608" CACHE STRING "Stack size in bytes")
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
    set(ENABLE_MEM ON)

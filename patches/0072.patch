@@ -1,0 +1,885 @@
+From 582c528bea53d0c8c9cdc87bbd8678935b85cf35 Mon Sep 17 00:00:00 2001
+From: Andrew Sampson <andrew@Andrews-Mac-Studio.local>
+Date: Mon, 7 Jul 2025 12:37:07 +0900
+Subject: [PATCH] feat: added JSON modules and import attributes
+
+---
+ .../quickjs/include/quickjs-inner.h           |   4 +-
+ .../quickjs/include/quickjs-opcode.h          |   2 +-
+ src/interpreter/quickjs/include/quickjs.h     |  16 +-
+ src/interpreter/quickjs/source/quickjs.cc     | 368 +++++++++++++-----
+ 4 files changed, 296 insertions(+), 94 deletions(-)
+
+diff --git a/src/interpreter/quickjs/include/quickjs-inner.h b/src/interpreter/quickjs/include/quickjs-inner.h
+index 12f0de8..163c87f 100644
+--- a/src/interpreter/quickjs/include/quickjs-inner.h
++++ b/src/interpreter/quickjs/include/quickjs-inner.h
+@@ -367,6 +367,7 @@ struct LEPUSRuntime {
+   LEPUSModuleLoaderFunc *module_loader_func;
+   LEPUSModuleResolveFunc *module_resolve_func;
+   void *module_loader_opaque;
++  LEPUSModuleCheckSupportedImportAttributes *module_check_attrs;
+ 
+   BOOL can_block : 8; /* TRUE if Atomics.wait can block */
+ 
+@@ -1120,6 +1121,7 @@ typedef struct JSAsyncFunctionData {
+ typedef struct JSReqModuleEntry {
+   JSAtom module_name;
+   LEPUSModuleDef *module; /* used using resolution */
++  LEPUSValue attributes; /* LEPUS_UNDEFINED or an object contains the attributes as key/value */
+ } JSReqModuleEntry;
+ 
+ typedef enum JSExportTypeEnum {
+@@ -2052,7 +2054,7 @@ typedef struct JSToken {
+ static LEPUSValue js_import_meta(LEPUSContext *ctx);
+ 
+ #ifndef NO_QUICKJS_COMPILER
+-LEPUSValue js_dynamic_import(LEPUSContext *ctx, LEPUSValueConst specifier);
++LEPUSValue js_dynamic_import(LEPUSContext *ctx, LEPUSValueConst specifier, LEPUSValueConst options);
+ #endif
+ 
+ #ifdef __cplusplus
+diff --git a/src/interpreter/quickjs/include/quickjs-opcode.h b/src/interpreter/quickjs/include/quickjs-opcode.h
+index bf702b2..08f7336 100644
+--- a/src/interpreter/quickjs/include/quickjs-opcode.h
++++ b/src/interpreter/quickjs/include/quickjs-opcode.h
+@@ -129,7 +129,7 @@ DEF(regexp, 1, 2, 1, none) /* create a RegExp object from the pattern and a
+                               bytecode string */
+ DEF(get_super_ctor, 1, 1, 1, none)
+ DEF(get_super, 1, 1, 1, none)
+-DEF(import, 1, 1, 1, none) /* dynamic module import */
++DEF(import, 1, 2, 1, none) /* dynamic module import */
+ 
+ DEF(check_var, 5, 0, 1, atom) /* check if a variable exists */
+ 
+diff --git a/src/interpreter/quickjs/include/quickjs.h b/src/interpreter/quickjs/include/quickjs.h
+index a8f2790..3f1c604 100644
+--- a/src/interpreter/quickjs/include/quickjs.h
++++ b/src/interpreter/quickjs/include/quickjs.h
+@@ -833,6 +833,7 @@ void LEPUS_FreeAtomRT(LEPUSRuntime *rt, JSAtom v);
+ LEPUSValue LEPUS_AtomToValue(LEPUSContext *ctx, JSAtom atom);
+ LEPUSValue LEPUS_AtomToString(LEPUSContext *ctx, JSAtom atom);
+ const char *LEPUS_AtomToCString(LEPUSContext *ctx, JSAtom atom);
++const char *LEPUS_AtomToCStringLen(LEPUSContext *ctx, size_t *plen, JSAtom atom);
+ 
+ /* object class support */
+ 
+@@ -841,6 +842,10 @@ typedef struct LEPUSPropertyEnum {
+   JSAtom atom;
+ } LEPUSPropertyEnum;
+ 
++
++void LEPUS_FreePropertyEnum(LEPUSContext *ctx, LEPUSPropertyEnum *tab,
++                                  uint32_t len);
++
+ typedef struct LEPUSPropertyDescriptor {
+   int flags;
+   LEPUSValue value;
+@@ -1350,7 +1355,11 @@ typedef char *LEPUSModuleNormalizeFunc(LEPUSContext *ctx,
+                                        const char *module_name, void *opaque);
+ typedef LEPUSModuleDef *LEPUSModuleLoaderFunc(LEPUSContext *ctx,
+                                               const char *module_name,
+-                                              void *opaque);
++                                              void *opaque,
++                                              LEPUSValueConst attributes);
++
++typedef int LEPUSModuleCheckSupportedImportAttributes(LEPUSContext *ctx, void *opaque,
++                                                      LEPUSValueConst attributes);
+ 
+ typedef char *LEPUSModuleResolveFunc(LEPUSContext *ctx,
+                                      const char *module_name,
+@@ -1364,6 +1373,7 @@ void LEPUS_SetModuleLoaderFunc(LEPUSRuntime *rt,
+                                LEPUSModuleNormalizeFunc *module_normalize,
+                                LEPUSModuleLoaderFunc *module_loader,
+                                LEPUSModuleResolveFunc *module_resolve,
++                               LEPUSModuleCheckSupportedImportAttributes *module_check_attrs,
+                                void *opaque);
+ 
+ LEPUSValue LEPUS_GetModuleNamespace(LEPUSContext *ctx, struct LEPUSModuleDef *m);
+@@ -1617,6 +1627,10 @@ int LEPUS_SetModuleExport(LEPUSContext *ctx, LEPUSModuleDef *m,
+ int LEPUS_SetModuleExportList(LEPUSContext *ctx, LEPUSModuleDef *m,
+                               const LEPUSCFunctionListEntry *tab, int len);
+ 
++/* associate a JSValue to a C module */
++int LEPUS_SetModulePrivateValue(LEPUSContext *ctx, LEPUSModuleDef *m, LEPUSValue val);
++LEPUSValue LEPUS_GetModulePrivateValue(LEPUSContext *ctx, LEPUSModuleDef *m);
++
+ /* expose for napi use */
+ LEPUSValue lepus_object_getOwnPropertyDescriptor(LEPUSContext *ctx,
+                                                  LEPUSValueConst this_val,
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index dee1f04..220b477 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -3283,6 +3283,22 @@ const char *LEPUS_AtomToCString(LEPUSContext *ctx, JSAtom atom) {
+   return cstr;
+ }
+ 
++
++/* free with LEPUS_FreeCString() */
++const char *LEPUS_AtomToCStringLen(LEPUSContext *ctx, size_t *plen, JSAtom atom) {
++  LEPUSValue str;
++  const char *cstr;
++  str = LEPUS_AtomToString(ctx, atom);
++  if (LEPUS_IsException(str)) {
++      if (plen)
++          *plen = 0;
++      return NULL;
++  }
++  cstr = LEPUS_ToCStringLen(ctx, plen, str);
++  LEPUS_FreeValue(ctx, str);
++  return cstr;
++}
++
+ #ifndef NO_QUICKJS_COMPILER
+ /* return a string atom containing name concatenated with str1 */
+ QJS_STATIC JSAtom js_atom_concat_str(LEPUSContext *ctx, JSAtom name,
+@@ -5016,6 +5032,10 @@ QJS_STATIC LEPUSValue JS_NewCFunction3(LEPUSContext *ctx, LEPUSCFunction *func,
+     name = "";
+   }
+   name_atom = LEPUS_NewAtom(ctx, name);
++  if (name_atom == JS_ATOM_NULL) {
++      LEPUS_FreeValue(ctx, func_obj);
++      return LEPUS_EXCEPTION;
++  }
+   js_function_set_properties(ctx, p, name_atom, length);
+   LEPUS_FreeAtom(ctx, name_atom);
+   return func_obj;
+@@ -7115,15 +7135,19 @@ void build_backtrace(LEPUSContext *ctx, LEPUSValueConst error_obj,
+ #ifdef ENABLE_QUICKJS_DEBUGGER
+   is_debug_mode = ctx->debugger_mode;
+ #endif
+-
+   LEPUSStackFrame *sf;
+   LEPUSValue str = LEPUS_UNDEFINED;
+   HandleScope func_scope(ctx, &str, HANDLE_TYPE_LEPUS_VALUE);
+   DynBuf dbuf;
+ 
++    /* protection in the out of memory case */
++    if (!LEPUS_IsObject(error_obj))
++        return;
++    
+   ctx->rt->exception_needs_backtrace = FALSE;
+   js_dbuf_init(ctx, &dbuf);
+   func_scope.PushHandle(&dbuf.buf, HANDLE_TYPE_HEAP_OBJ);
++    
+   if (filename) {
+     dbuf_printf(&dbuf, "    at %s", filename);
+     if (line_num != -1) {
+@@ -7149,11 +7173,17 @@ void build_backtrace(LEPUSContext *ctx, LEPUSValueConst error_obj,
+     }
+     dbuf_putc(&dbuf, '\n');
+     str = LEPUS_NewString(ctx, filename);
+-    LEPUS_DefinePropertyValue(ctx, error_obj, JS_ATOM_fileName, str,
+-                              LEPUS_PROP_WRITABLE | LEPUS_PROP_CONFIGURABLE);
++        if (LEPUS_IsException(str))
++            return;
++        
++        /* Note: SpiderMonkey does that, could update once there is a standard */
++        if (LEPUS_DefinePropertyValue(ctx, error_obj, JS_ATOM_fileName, str,
++                                      LEPUS_PROP_WRITABLE | LEPUS_PROP_CONFIGURABLE) < 0 ||
+     LEPUS_DefinePropertyValue(ctx, error_obj, JS_ATOM_lineNumber,
+                               LEPUS_NewInt32(ctx, line_num),
+-                              LEPUS_PROP_WRITABLE | LEPUS_PROP_CONFIGURABLE);
++                                      LEPUS_PROP_WRITABLE | LEPUS_PROP_CONFIGURABLE) < 0) {
++            return;
++        }
+   }
+ 
+   get_backtrace(ctx, &dbuf, is_debug_mode, error_obj, cur_pc, backtrace_flags);
+@@ -8057,7 +8087,7 @@ QJS_STATIC int num_keys_cmp(const void *p1, const void *p2, void *opaque) {
+     return 1;
+ }
+ 
+-QJS_STATIC void js_free_prop_enum(LEPUSContext *ctx, LEPUSPropertyEnum *tab,
++void LEPUS_FreePropertyEnum(LEPUSContext *ctx, LEPUSPropertyEnum *tab,
+                                   uint32_t len) {
+   uint32_t i;
+   if (tab) {
+@@ -8152,7 +8182,7 @@ JS_GetOwnPropertyNamesInternal(LEPUSContext *ctx, LEPUSPropertyEnum **ptab,
+               /* set the "is_enumerable" field if necessary */
+               res = JS_GetOwnPropertyInternal(ctx, &desc, p, atom);
+               if (res < 0) {
+-                js_free_prop_enum(ctx, tab_exotic, exotic_count);
++                LEPUS_FreePropertyEnum(ctx, tab_exotic, exotic_count);
+                 return -1;
+               }
+               if (res) {
+@@ -8181,14 +8211,14 @@ JS_GetOwnPropertyNamesInternal(LEPUSContext *ctx, LEPUSPropertyEnum **ptab,
+   atom_count = num_keys_count + str_keys_count + sym_keys_count;
+   if (atom_count > JS_ATOM_MAX_INT) {
+     LEPUS_ThrowRangeError(ctx, "Too many properties to enumerate");
+-    js_free_prop_enum(ctx, tab_exotic, exotic_count);
++    LEPUS_FreePropertyEnum(ctx, tab_exotic, exotic_count);
+     return -1;
+   }
+   /* avoid allocating 0 bytes */
+   tab_atom = static_cast<LEPUSPropertyEnum *>(
+       lepus_malloc(ctx, sizeof(tab_atom[0]) * max_int(atom_count, 1)));
+   if (!tab_atom) {
+-    js_free_prop_enum(ctx, tab_exotic, exotic_count);
++    LEPUS_FreePropertyEnum(ctx, tab_exotic, exotic_count);
+     return -1;
+   }
+ 
+@@ -8224,8 +8254,8 @@ JS_GetOwnPropertyNamesInternal(LEPUSContext *ctx, LEPUSPropertyEnum **ptab,
+       for (i = 0; i < p->u.array.count; i++) {
+         tab_atom[num_index].atom = __JS_AtomFromUInt32(i);
+         if (tab_atom[num_index].atom == JS_ATOM_NULL) {
+-          js_free_prop_enum(ctx, tab_exotic, exotic_count);
+-          js_free_prop_enum(ctx, tab_atom, num_index);
++          LEPUS_FreePropertyEnum(ctx, tab_exotic, exotic_count);
++          LEPUS_FreePropertyEnum(ctx, tab_atom, num_index);
+           return -1;
+         }
+         tab_atom[num_index].is_enumerable = TRUE;
+@@ -8617,6 +8647,7 @@ LEPUSValue LEPUS_GetPropertyStr(LEPUSContext *ctx, LEPUSValueConst this_obj,
+   JSAtom atom;
+   LEPUSValue ret;
+   atom = LEPUS_NewAtom(ctx, prop);
++  if (atom == JS_ATOM_NULL) return LEPUS_EXCEPTION;
+   ret = JS_GetPropertyInternal_RC(ctx, this_obj, atom, this_obj, 0);
+   LEPUS_FreeAtom(ctx, atom);
+   return ret;
+@@ -9444,6 +9475,7 @@ int LEPUS_SetPropertyStr(LEPUSContext *ctx, LEPUSValueConst this_obj,
+   JSAtom atom;
+   int ret;
+   atom = LEPUS_NewAtom(ctx, prop);
++  if (atom == JS_ATOM_NULL) return LEPUS_EXCEPTION;
+   ret = JS_SetPropertyInternal_RC(ctx, this_obj, atom, val, LEPUS_PROP_THROW);
+   LEPUS_FreeAtom(ctx, atom);
+   return ret;
+@@ -10007,6 +10039,7 @@ static int JS_DefinePropertyValueStr_RC(LEPUSContext *ctx,
+   JSAtom atom;
+   int ret;
+   atom = LEPUS_NewAtom(ctx, prop);
++  if (atom == JS_ATOM_NULL) return LEPUS_EXCEPTION;
+   ret = JS_DefinePropertyValue_RC(ctx, this_obj, atom, val, flags);
+   LEPUS_FreeAtom(ctx, atom);
+   return ret;
+@@ -15291,7 +15324,7 @@ QJS_STATIC LEPUSValue build_for_in_iterator(LEPUSContext *ctx, LEPUSValue obj) {
+             ctx, &tab_atom, &tab_atom_count, p1,
+             LEPUS_GPN_STRING_MASK | LEPUS_GPN_ENUM_ONLY))
+       goto fail;
+-    js_free_prop_enum(ctx, tab_atom, tab_atom_count);
++    LEPUS_FreePropertyEnum(ctx, tab_atom, tab_atom_count);
+     if (tab_atom_count != 0) {
+       goto slow_path;
+     }
+@@ -15318,7 +15351,7 @@ QJS_STATIC LEPUSValue build_for_in_iterator(LEPUSContext *ctx, LEPUSValue obj) {
+     for (i = 0; i < tab_atom_count; i++) {
+       JS_SetPropertyInternal_RC(ctx, enum_obj, tab_atom[i].atom, LEPUS_NULL, 0);
+     }
+-    js_free_prop_enum(ctx, tab_atom, tab_atom_count);
++    LEPUS_FreePropertyEnum(ctx, tab_atom, tab_atom_count);
+   }
+   return enum_obj;
+ 
+@@ -15335,7 +15368,7 @@ slow_path:
+           ctx, enum_obj, tab_atom[i].atom, LEPUS_NULL,
+           (tab_atom[i].is_enumerable ? LEPUS_PROP_ENUMERABLE : 0));
+     }
+-    js_free_prop_enum(ctx, tab_atom, tab_atom_count);
++    LEPUS_FreePropertyEnum(ctx, tab_atom, tab_atom_count);
+     p = p->shape->proto;
+   }
+   return enum_obj;
+@@ -15856,7 +15889,7 @@ CopyValueProperties:
+     if (ret < 0) break;
+     ret = 0;
+   }
+-  js_free_prop_enum(ctx, tab_atom, tab_atom_count);
++  LEPUS_FreePropertyEnum(ctx, tab_atom, tab_atom_count);
+   return ret;
+ }
+ 
+@@ -17219,9 +17252,11 @@ restart:
+       CASE(OP_import) : {
+ #ifndef NO_QUICKJS_COMPILER
+         LEPUSValue val;
+-        val = js_dynamic_import(ctx, sp[-1]);
++        val = js_dynamic_import(ctx, sp[-2], sp[-1]);
+         if (LEPUS_IsException(val)) goto exception;
++        LEPUS_FreeValue(ctx, sp[-2]);
+         LEPUS_FreeValue(ctx, sp[-1]);
++        sp--;
+         sp[-1] = val;
+ #endif
+       }
+@@ -20295,6 +20330,7 @@ __exception int js_parse_template_part(JSParseState *s, const uint8_t *p) {
+     }
+     if (string_buffer_putc(b, c)) goto fail;
+   }
++  
+   s->token.val = TOK_TEMPLATE;
+   s->token.u.str.sep = c;
+   s->token.u.str.str = LEPUS_UNDEFINED;
+@@ -26845,6 +26881,7 @@ QJS_STATIC void js_free_module_def(LEPUSContext *ctx, LEPUSModuleDef *m) {
+   for (i = 0; i < m->req_module_entries_count; i++) {
+     JSReqModuleEntry *rme = &m->req_module_entries[i];
+     LEPUS_FreeAtom(ctx, rme->module_name);
++    LEPUS_FreeValue(ctx, rme->attributes);
+   }
+   lepus_free(ctx, m->req_module_entries);
+ 
+@@ -26897,27 +26934,20 @@ int js_resize_array(LEPUSContext *ctx, void **parray, int elem_size, int *psize,
+ int add_req_module_entry(LEPUSContext *ctx, LEPUSModuleDef *m,
+                          JSAtom module_name) {
+   JSReqModuleEntry *rme;
+-  int i;
+-
+-  /* no need to add the module request if it is already present */
+-  for (i = 0; i < m->req_module_entries_count; i++) {
+-    rme = &m->req_module_entries[i];
+-    if (rme->module_name == module_name) return i;
+-  }
+-
++  
+   if (js_resize_array(ctx, (void **)&m->req_module_entries,
+                       sizeof(JSReqModuleEntry), &m->req_module_entries_size,
+                       &m->req_module_entries_count,
+                       m->req_module_entries_count + 1))
+-    return -1;
+-  i = m->req_module_entries_count - 1;
+-  rme = &m->req_module_entries[i];
++      return -1;
++  rme = &m->req_module_entries[m->req_module_entries_count - 1];
+   if (ctx->gc_enable)
+     rme->module_name = module_name;
+   else
+     rme->module_name = LEPUS_DupAtom(ctx, module_name);
+   rme->module = NULL;
+-  return i;
++  rme->attributes = LEPUS_UNDEFINED;
++  return m->req_module_entries_count - 1;
+ }
+ 
+ JSExportEntry *find_export_entry(LEPUSContext *ctx, LEPUSModuleDef *m,
+@@ -27039,14 +27069,27 @@ fail:
+   return -1;
+ }
+ 
++int LEPUS_SetModulePrivateValue(LEPUSContext *ctx, LEPUSModuleDef *m, LEPUSValue val)
++{
++    set_value(ctx, &m->private_value, val);
++    return 0;
++}
++
++LEPUSValue LEPUS_GetModulePrivateValue(LEPUSContext *ctx, LEPUSModuleDef *m)
++{
++    return LEPUS_DupValue(ctx, m->private_value);
++}
++
+ void LEPUS_SetModuleLoaderFunc(LEPUSRuntime *rt,
+                                LEPUSModuleNormalizeFunc *module_normalize,
+                                LEPUSModuleLoaderFunc *module_loader,
+                                LEPUSModuleResolveFunc *module_resolve,
++                               LEPUSModuleCheckSupportedImportAttributes *module_check_attrs,
+                                void *opaque) {
+   rt->module_normalize_func = module_normalize;
+   rt->module_loader_func = module_loader;
+   rt->module_resolve_func = module_resolve;
++  rt->module_check_attrs = module_check_attrs;
+   rt->module_loader_opaque = opaque;
+ }
+ 
+@@ -27148,7 +27191,7 @@ static LEPUSModuleDef *js_find_loaded_module(LEPUSContext *ctx, JSAtom name)
+ 
+ /* return NULL in case of exception (e.g. module could not be loaded) */
+ QJS_STATIC LEPUSModuleDef *js_host_resolve_imported_module(
+-    LEPUSContext *ctx, JSAtom base_module_name, JSAtom module_name1) {
++    LEPUSContext *ctx, JSAtom base_module_name, JSAtom module_name1, LEPUSValueConst attributes) {
+   LEPUSRuntime *rt = ctx->rt;
+   struct list_head *el;
+   LEPUSModuleDef *m;
+@@ -27208,7 +27251,7 @@ QJS_STATIC LEPUSModuleDef *js_host_resolve_imported_module(
+     return NULL;
+   }
+ 
+-  m = rt->module_loader_func(ctx, cname, rt->module_loader_opaque);
++  m = rt->module_loader_func(ctx, cname, rt->module_loader_opaque, attributes);
+   if (!ctx->gc_enable) lepus_free(ctx, cname);
+   return m;
+ }
+@@ -27674,7 +27717,7 @@ int js_resolve_module(LEPUSContext *ctx, LEPUSModuleDef *m)
+       return -1;
+     }
+ 
+-    m1 = js_host_resolve_imported_module(ctx, m->module_name, rme->module_name);
++    m1 = js_host_resolve_imported_module(ctx, m->module_name, rme->module_name, rme->attributes);
+     if (!m1)
+       return -1;
+     rme->module = m1;
+@@ -28190,7 +28233,7 @@ static LEPUSValue js_import_meta(LEPUSContext *ctx)
+     return LEPUS_GetImportMeta(ctx, m);
+ }
+ 
+-LEPUSValue js_dynamic_import(LEPUSContext *ctx, LEPUSValueConst specifier) {
++LEPUSValue js_dynamic_import(LEPUSContext *ctx, LEPUSValueConst specifier, LEPUSValueConst options) {
+   HandleScope func_scope(ctx);
+   LEPUSStackFrame *sf;
+   LEPUSFunctionBytecode *b;
+@@ -28200,12 +28243,13 @@ LEPUSValue js_dynamic_import(LEPUSContext *ctx, LEPUSValueConst specifier) {
+   LEPUSValue promise, resolving_funcs[2];
+   func_scope.PushLEPUSValueArrayHandle(resolving_funcs, 2);
+   LEPUSValue specifierString, ret = LEPUS_UNDEFINED, func_obj, err, ns;
++  LEPUSValue attributes = LEPUS_UNDEFINED, attributes_obj = LEPUS_UNDEFINED;
+   func_scope.PushHandle(&ret, HANDLE_TYPE_LEPUS_VALUE);
+-
++  func_scope.PushHandle(&attributes, HANDLE_TYPE_LEPUS_VALUE);
++  func_scope.PushHandle(&attributes_obj, HANDLE_TYPE_LEPUS_VALUE);
+   promise = LEPUS_NewPromiseCapability(ctx, resolving_funcs);
+   if (LEPUS_IsException(promise)) return promise;
+   func_scope.PushHandle(&promise, HANDLE_TYPE_LEPUS_VALUE);
+-
+   /* XXX: currently we just use the filename of the englobing
+      function. It does not work for eval(). Need to add a
+      ScriptOrModule info in LEPUSFunctionBytecode */
+@@ -28219,17 +28263,67 @@ LEPUSValue js_dynamic_import(LEPUSContext *ctx, LEPUSValueConst specifier) {
+     LEPUS_ThrowTypeError(ctx, "no function filename for import()");
+     goto exception;
+   }
++  
+   basename = LEPUS_GetScriptOrModuleName(ctx, 0);
+-
++  
++  /* the string conversion must occur here */
+   specifierString = LEPUS_ToString(ctx, specifier);
+   if (LEPUS_IsException(specifierString)) goto exception;
+   func_scope.PushHandle(&specifierString, HANDLE_TYPE_LEPUS_VALUE);
++  
++  /* Handle options parameter for import attributes */
++  if (!LEPUS_IsUndefined(options)) {
++      if (!LEPUS_IsObject(options)) {
++          LEPUS_ThrowTypeError(ctx, "options must be an object");
++          goto exception;
++      }
++      attributes_obj = LEPUS_GetProperty(ctx, options, JS_ATOM_with);
++      if (LEPUS_IsException(attributes_obj))
++          goto exception;
++      if (!LEPUS_IsUndefined(attributes_obj)) {
++          LEPUSPropertyEnum *atoms;
++          uint32_t atoms_len, i;
++          LEPUSValue val;
++          
++          if (!LEPUS_IsObject(attributes_obj)) {
++              LEPUS_ThrowTypeError(ctx, "options.with must be an object");
++              goto exception;
++          }
++          attributes = LEPUS_NewObjectProto(ctx, LEPUS_NULL);
++          if (JS_GetOwnPropertyNamesInternal(ctx, &atoms, &atoms_len, LEPUS_VALUE_GET_OBJ(attributes_obj),
++                                                LEPUS_GPN_STRING_MASK | LEPUS_GPN_ENUM_ONLY)) {
++              goto exception;
++          }
++          for(i = 0; i < atoms_len; i++) {
++              val = LEPUS_GetProperty(ctx, attributes_obj, atoms[i].atom);
++              if (LEPUS_IsException(val))
++                  goto exception1;
++              if (!LEPUS_IsString(val)) {
++                  if (!ctx->gc_enable) LEPUS_FreeValue(ctx, val);
++                  LEPUS_ThrowTypeError(ctx, "module attribute values must be strings");
++                  goto exception1;
++              }
++              if (LEPUS_DefinePropertyValue(ctx, attributes, atoms[i].atom, val,
++                                            LEPUS_PROP_C_W_E) < 0) {
++              exception1:
++                  if (!ctx->gc_enable) LEPUS_FreePropertyEnum(ctx, atoms, atoms_len);
++                  goto exception;
++              }
++          }
++          if (!ctx->gc_enable) LEPUS_FreePropertyEnum(ctx, atoms, atoms_len);
++          if (ctx->rt->module_check_attrs &&
++              ctx->rt->module_check_attrs(ctx, ctx->rt->module_loader_opaque, attributes) < 0) {
++              goto exception;
++          }
++      }
++  }
++  
+   filename = js_value_to_atom(ctx, specifierString);
+   if (!ctx->gc_enable) LEPUS_FreeValue(ctx, specifierString);
+   if (filename == JS_ATOM_NULL) goto exception;
+   func_scope.PushLEPUSAtom(filename);
+ 
+-  m = js_host_resolve_imported_module(ctx, basename, filename);
++  m = js_host_resolve_imported_module(ctx, basename, filename, attributes);
+   if (!ctx->gc_enable) LEPUS_FreeAtom(ctx, filename);
+   if (!m) {
+     goto exception;
+@@ -28261,10 +28355,12 @@ LEPUSValue js_dynamic_import(LEPUSContext *ctx, LEPUSValueConst specifier) {
+     LEPUS_FreeValue(ctx, ns);
+     LEPUS_FreeValue(ctx, resolving_funcs[0]);
+     LEPUS_FreeValue(ctx, resolving_funcs[1]);
++    LEPUS_FreeValue(ctx, attributes);
+   }
+   return promise;
+ 
+ exception:
++  if (!ctx->gc_enable) LEPUS_FreeValue(ctx, attributes_obj);
+   err = LEPUS_GetException(ctx);
+   func_scope.PushHandle(&err, HANDLE_TYPE_LEPUS_VALUE);
+   ret = LEPUS_Call(ctx, resolving_funcs[1], LEPUS_UNDEFINED, 1,
+@@ -28274,6 +28370,7 @@ exception:
+     LEPUS_FreeValue(ctx, err);
+     LEPUS_FreeValue(ctx, resolving_funcs[0]);
+     LEPUS_FreeValue(ctx, resolving_funcs[1]);
++    LEPUS_FreeValue(ctx, attributes);
+   }
+   return promise;
+ }
+@@ -28342,26 +28439,121 @@ LEPUSValue js_evaluate_module(LEPUSContext *ctx, LEPUSModuleDef *m) {
+   return ret_val;
+ }
+ 
+-__exception JSAtom js_parse_from_clause(JSParseState *s) {
+-  JSAtom module_name;
+-  if (!token_is_pseudo_keyword(s, JS_ATOM_from)) {
+-    js_parse_error(s, "from clause expected");
+-    return JS_ATOM_NULL;
+-  }
+-  if (next_token(s)) return JS_ATOM_NULL;
+-  if (s->token.val != TOK_STRING) {
+-    js_parse_error(s, "string expected");
+-    return JS_ATOM_NULL;
+-  }
+-  module_name = js_value_to_atom(s->ctx, s->token.u.str.str);
+-  if (module_name == JS_ATOM_NULL) return JS_ATOM_NULL;
+-  HandleScope func_scope(s->ctx->rt);
+-  func_scope.PushLEPUSAtom(module_name);
+-  if (next_token(s)) {
+-    if (!s->ctx->gc_enable) LEPUS_FreeAtom(s->ctx, module_name);
+-    return JS_ATOM_NULL;
+-  }
+-  return module_name;
++static __exception int js_parse_with_clause(JSParseState *s, JSReqModuleEntry *rme)
++{
++    LEPUSContext *ctx = s->ctx;
++    JSAtom key;
++    int ret;
++    const uint8_t *key_token_ptr;
++    HandleScope func_scope(ctx->rt);
++    
++    if (next_token(s))
++        return -1;
++    if (js_parse_expect(s, '{'))
++        return -1;
++        
++    while (s->token.val != '}') {
++        key_token_ptr = s->token.ptr;
++        if (s->token.val == TOK_STRING) {
++            key = js_value_to_atom(ctx, s->token.u.str.str);
++            if (key == JS_ATOM_NULL)
++                return -1;
++        } else {
++            if (!token_is_ident(s->token.val)) {
++                js_parse_error(s, "identifier expected");
++                return -1;
++            }
++            key = ctx->gc_enable ? s->token.u.ident.atom : LEPUS_DupAtom(ctx, s->token.u.ident.atom);
++        }
++        func_scope.PushLEPUSAtom(key);
++        
++        if (next_token(s))
++            return -1;
++        if (js_parse_expect(s, ':')) {
++            if (!ctx->gc_enable) LEPUS_FreeAtom(ctx, key);
++            return -1;
++        }
++        if (s->token.val != TOK_STRING) {
++            js_parse_error(s, "string expected");
++            if (!ctx->gc_enable) LEPUS_FreeAtom(ctx, key);
++            return -1;
++        }
++        
++        if (LEPUS_IsUndefined(rme->attributes)) {
++            LEPUSValue attributes = LEPUS_NewObjectProto(ctx, LEPUS_NULL);
++            if (LEPUS_IsException(attributes)) {
++                if (!ctx->gc_enable) LEPUS_FreeAtom(ctx, key);
++                return -1;
++            }
++            rme->attributes = attributes;
++        }
++        
++        ret = LEPUS_HasProperty(ctx, rme->attributes, key);
++        if (ret != 0) {
++            if (!ctx->gc_enable) LEPUS_FreeAtom(ctx, key);
++            if (ret < 0)
++                return -1;
++            else
++                return js_parse_error(s, "duplicate with key");
++        }
++        
++        ret = LEPUS_DefinePropertyValue(ctx, rme->attributes, key,
++                                       ctx->gc_enable ? s->token.u.str.str : LEPUS_DupValue(ctx, s->token.u.str.str), 
++                                       LEPUS_PROP_C_W_E);
++        if (!ctx->gc_enable) LEPUS_FreeAtom(ctx, key);
++        if (ret < 0)
++            return -1;
++            
++        if (next_token(s))
++            return -1;
++        if (s->token.val != ',')
++            break;
++        if (next_token(s))
++            return -1;
++    }
++    
++    if (!LEPUS_IsUndefined(rme->attributes) &&
++        ctx->rt->module_check_attrs &&
++        ctx->rt->module_check_attrs(ctx, ctx->rt->module_loader_opaque, rme->attributes) < 0) {
++        return -1;
++    }
++    
++    return js_parse_expect(s, '}');
++}
++
++/* return the module index in m->req_module_entries[] or < 0 if error */
++__exception int js_parse_from_clause(JSParseState *s, LEPUSModuleDef *m) {
++    JSAtom module_name;
++    int idx;
++    LEPUSContext *ctx = s->ctx;
++    HandleScope func_scope(ctx->rt);
++    
++    if (!token_is_pseudo_keyword(s, JS_ATOM_from)) {
++        js_parse_error(s, "from clause expected");
++        return -1;
++    }
++    if (next_token(s)) return -1;
++    if (s->token.val != TOK_STRING) {
++        js_parse_error(s, "string expected");
++        return -1;
++    }
++    module_name = js_value_to_atom(ctx, s->token.u.str.str);
++    if (module_name == JS_ATOM_NULL) return -1;
++    func_scope.PushLEPUSAtom(module_name);
++    if (next_token(s)) {
++        if (!ctx->gc_enable) LEPUS_FreeAtom(ctx, module_name);
++        return -1;
++    }
++
++    idx = add_req_module_entry(ctx, m, module_name);
++    if (!ctx->gc_enable) LEPUS_FreeAtom(ctx, module_name);
++    if (idx < 0)
++        return -1;
++    if (s->token.val == TOK_WITH) {
++        if (js_parse_with_clause(s, &m->req_module_entries[idx]))
++            return -1;
++    }
++    return idx;
+ }
+ 
+ __exception int js_parse_export(JSParseState *s) {
+@@ -28369,7 +28561,6 @@ __exception int js_parse_export(JSParseState *s) {
+   LEPUSModuleDef *m = s->cur_func->module;
+   JSAtom local_name, export_name;
+   int first_export, idx, i, tok;
+-  JSAtom module_name;
+   JSExportEntry *me;
+ 
+   if (next_token(s)) return -1;
+@@ -28431,10 +28622,7 @@ __exception int js_parse_export(JSParseState *s) {
+       }
+       if (js_parse_expect(s, '}')) return -1;
+       if (token_is_pseudo_keyword(s, JS_ATOM_from)) {
+-        module_name = js_parse_from_clause(s);
+-        if (module_name == JS_ATOM_NULL) return -1;
+-        idx = add_req_module_entry(ctx, m, module_name);
+-        if (!ctx->gc_enable) LEPUS_FreeAtom(ctx, module_name);
++        idx = js_parse_from_clause(s, m);
+         if (idx < 0) return -1;
+         for (i = first_export; i < m->export_entries_count; i++) {
+           me = &m->export_entries[i];
+@@ -28455,10 +28643,7 @@ __exception int js_parse_export(JSParseState *s) {
+                           ? s->token.u.ident.atom
+                           : LEPUS_DupAtom(ctx, s->token.u.ident.atom);
+         if (next_token(s)) goto fail1;
+-        module_name = js_parse_from_clause(s);
+-        if (module_name == JS_ATOM_NULL) goto fail1;
+-        idx = add_req_module_entry(ctx, m, module_name);
+-        if (!ctx->gc_enable) LEPUS_FreeAtom(ctx, module_name);
++        idx = js_parse_from_clause(s, m);
+         if (idx < 0) goto fail1;
+         me = add_export_entry(s, m, JS_ATOM__star_, export_name,
+                               JS_EXPORT_TYPE_INDIRECT);
+@@ -28466,12 +28651,7 @@ __exception int js_parse_export(JSParseState *s) {
+         if (!me) return -1;
+         me->u.req_module_idx = idx;
+       } else {
+-        module_name = js_parse_from_clause(s);
+-        if (module_name == JS_ATOM_NULL) return -1;
+-        HandleScope func_scope(ctx->rt);
+-        func_scope.PushLEPUSAtom(module_name);
+-        idx = add_req_module_entry(ctx, m, module_name);
+-        if (!ctx->gc_enable) LEPUS_FreeAtom(ctx, module_name);
++        idx = js_parse_from_clause(s, m);
+         if (idx < 0) return -1;
+         if (add_star_export_entry(ctx, m, idx) < 0) return -1;
+       }
+@@ -28551,7 +28731,7 @@ QJS_STATIC int add_import(JSParseState *s, LEPUSModuleDef *m, JSAtom local_name,
+ __exception int js_parse_import(JSParseState *s) {
+   LEPUSContext *ctx = s->ctx;
+   LEPUSModuleDef *m = s->cur_func->module;
+-  JSAtom local_name, import_name, module_name;
++  JSAtom local_name, import_name;
+   int first_import, i, idx;
+   bool is_gc = ctx->gc_enable;
+ 
+@@ -28559,7 +28739,7 @@ __exception int js_parse_import(JSParseState *s) {
+ 
+   first_import = m->import_entries_count;
+   if (s->token.val == TOK_STRING) {
+-    module_name = js_value_to_atom(ctx, s->token.u.str.str);
++    JSAtom module_name = js_value_to_atom(ctx, s->token.u.str.str);
+     if (module_name == JS_ATOM_NULL) return -1;
+     HandleScope func_scope(ctx->rt);
+     func_scope.PushLEPUSAtom(module_name);
+@@ -28567,6 +28747,13 @@ __exception int js_parse_import(JSParseState *s) {
+       if (!is_gc) LEPUS_FreeAtom(ctx, module_name);
+       return -1;
+     }
++    idx = add_req_module_entry(ctx, m, module_name);
++    if (!is_gc) LEPUS_FreeAtom(ctx, module_name);
++    if (idx < 0) return -1;
++    if (s->token.val == TOK_WITH) {
++      if (js_parse_with_clause(s, &m->req_module_entries[idx]))
++        return -1;
++    }
+   } else {
+     if (s->token.val == TOK_IDENT) {
+       if (s->token.u.ident.is_reserved) {
+@@ -28638,12 +28825,9 @@ __exception int js_parse_import(JSParseState *s) {
+       if (js_parse_expect(s, '}')) return -1;
+     }
+   end_import_clause:
+-    module_name = js_parse_from_clause(s);
+-    if (module_name == JS_ATOM_NULL) return -1;
++    idx = js_parse_from_clause(s, m);
++    if (idx < 0) return -1;
+   }
+-  idx = add_req_module_entry(ctx, m, module_name);
+-  if (!is_gc) LEPUS_FreeAtom(ctx, module_name);
+-  if (idx < 0) return -1;
+   for (i = first_import; i < m->import_entries_count; i++)
+     m->import_entries[i].req_module_idx = idx;
+ 
+@@ -34604,11 +34788,11 @@ static int JS_WriteModule(BCWriterState *s, LEPUSValueConst obj) {
+   if (!s->allow_bytecode) goto fail;
+   bc_put_u8(s, BC_TAG_MODULE);
+   bc_put_atom(s, m->module_name);
+-
+   bc_put_leb128(s, m->req_module_entries_count);
+   for (i = 0; i < m->req_module_entries_count; i++) {
+     JSReqModuleEntry *rme = &m->req_module_entries[i];
+     bc_put_atom(s, rme->module_name);
++    if (JS_WriteObjectRec(s, rme->attributes)) goto fail;
+   }
+ 
+   bc_put_leb128(s, m->export_entries_count);
+@@ -35453,6 +35637,8 @@ QJS_STATIC LEPUSValue JS_ReadModule(BCReaderState *s) {
+     for (i = 0; i < m->req_module_entries_count; i++) {
+       JSReqModuleEntry *rme = &m->req_module_entries[i];
+       if (bc_get_atom(s, &rme->module_name)) goto fail;
++      rme->attributes = JS_ReadObjectRec(s);
++      if (LEPUS_IsException(rme->attributes)) goto fail;
+     }
+   }
+ 
+@@ -36677,7 +36863,7 @@ QJS_STATIC __exception int JS_ObjectDefineProperties(
+   ret = 0;
+ 
+ exception:
+-  js_free_prop_enum(ctx, atoms, len);
++  LEPUS_FreePropertyEnum(ctx, atoms, len);
+   LEPUS_FreeValue(ctx, props);
+   LEPUS_FreeValue(ctx, desc);
+   return ret;
+@@ -36952,12 +37138,12 @@ js_object_getOwnPropertyDescriptors(LEPUSContext *ctx, LEPUSValueConst this_val,
+         goto exception;
+     }
+   }
+-  js_free_prop_enum(ctx, props, len);
++  LEPUS_FreePropertyEnum(ctx, props, len);
+   LEPUS_FreeValue(ctx, obj);
+   return r;
+ 
+ exception:
+-  js_free_prop_enum(ctx, props, len);
++  LEPUS_FreePropertyEnum(ctx, props, len);
+   LEPUS_FreeValue(ctx, obj);
+   LEPUS_FreeValue(ctx, r);
+   return LEPUS_EXCEPTION;
+@@ -37028,7 +37214,7 @@ exception:
+   LEPUS_FreeValue(ctx, r);
+   r = LEPUS_EXCEPTION;
+ done:
+-  js_free_prop_enum(ctx, atoms, len);
++  LEPUS_FreePropertyEnum(ctx, atoms, len);
+   LEPUS_FreeValue(ctx, obj);
+   return r;
+ }
+@@ -37281,11 +37467,11 @@ QJS_STATIC LEPUSValue js_object_seal(LEPUSContext *ctx,
+                              LEPUS_UNDEFINED, desc_flags) < 0)
+       goto exception;
+   }
+-  js_free_prop_enum(ctx, props, len);
++  LEPUS_FreePropertyEnum(ctx, props, len);
+   return js_object_preventExtensions(ctx, LEPUS_UNDEFINED, 1, argv, 0);
+ 
+ exception:
+-  js_free_prop_enum(ctx, props, len);
++  LEPUS_FreePropertyEnum(ctx, props, len);
+   return LEPUS_EXCEPTION;
+ }
+ 
+@@ -37327,11 +37513,11 @@ QJS_STATIC LEPUSValue js_object_isSealed(LEPUSContext *ctx,
+   if (res < 0) return LEPUS_EXCEPTION;
+   res ^= 1;
+ done:
+-  js_free_prop_enum(ctx, props, len);
++  LEPUS_FreePropertyEnum(ctx, props, len);
+   return LEPUS_NewBool(ctx, res);
+ 
+ exception:
+-  js_free_prop_enum(ctx, props, len);
++  LEPUS_FreePropertyEnum(ctx, props, len);
+   return LEPUS_EXCEPTION;
+ }
+ 
+@@ -45784,7 +45970,7 @@ QJS_STATIC LEPUSValue internalize_json_property(LEPUSContext *ctx,
+       if (ret < 0) goto fail;
+     }
+   }
+-  js_free_prop_enum(ctx, atoms, len);
++  LEPUS_FreePropertyEnum(ctx, atoms, len);
+   atoms = NULL;
+   name_val = JS_AtomToValue_RC(ctx, name);
+   if (LEPUS_IsException(name_val)) goto fail;
+@@ -45795,7 +45981,7 @@ QJS_STATIC LEPUSValue internalize_json_property(LEPUSContext *ctx,
+   LEPUS_FreeValue(ctx, val);
+   return res;
+ fail:
+-  js_free_prop_enum(ctx, atoms, len);
++  LEPUS_FreePropertyEnum(ctx, atoms, len);
+   LEPUS_FreeValue(ctx, val);
+   return LEPUS_EXCEPTION;
+ }
+@@ -48504,14 +48690,14 @@ QJS_STATIC int js_proxy_get_own_property_names(LEPUSContext *ctx,
+     }
+   }
+ 
+-  js_free_prop_enum(ctx, tab2, len2);
++  LEPUS_FreePropertyEnum(ctx, tab2, len2);
+   LEPUS_FreeValue(ctx, prop_array);
+   *ptab = tab;
+   *plen = len;
+   return 0;
+ fail:
+-  js_free_prop_enum(ctx, tab2, len2);
+-  js_free_prop_enum(ctx, tab, len);
++  LEPUS_FreePropertyEnum(ctx, tab2, len2);
++  LEPUS_FreePropertyEnum(ctx, tab, len);
+   LEPUS_FreeValue(ctx, prop_array);
+   return -1;
+ }
+-- 
+2.45.2
+

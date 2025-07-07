@@ -421,7 +421,7 @@
         import {
             decodeVariant,
             createHakoRuntime,
-            HAKO_PROD,
+            HAKO_PROD as HAKO,
         } from "hakojs";
 
         // DOM elements
@@ -450,7 +450,7 @@
                 runtimeStatus.className = "status-loading";
 
                 // Initialize Hako with the WASM binary
-                const wasmBinary = decodeVariant(HAKO_PROD);
+                const wasmBinary = decodeVariant(HAKO);
                 runtime = await createHakoRuntime({
                     wasm: {
                         io: {
@@ -868,8 +868,7 @@
 
                 pendingConsoleOutputs.forEach((output) => {
                     const logLine = document.createElement("div");
-                    logLine.className = `console-${output.type}`;
-
+                  
                     const formattedArgs = output.args
                         .map((arg) => formatValue(arg))
                         .join(" ");
@@ -1251,9 +1250,6 @@
                     outputContent.appendChild(stackTraceDiv);
                 }
             } finally {
-                // Run any pending jobs (like promises)
-                runtime.executePendingJobs();
-
                 // Display pending console outputs
                 displayPendingConsoleOutputs(entry);
             }

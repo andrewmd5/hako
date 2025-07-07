@@ -1,13 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import type { ValueFactory } from "../src/vm/value-factory";
-import type { VMContext } from "../src/vm/context";
-import type { HakoRuntime } from "../src/runtime/runtime";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createHakoRuntime } from "../src/";
-import fs from "node:fs/promises";
-import path from "node:path";
-import type { HostCallbackFunction } from "../src/etc/types";
-import type { VMValue } from "../src/vm/value";
 import { HakoError } from "../src/etc/errors";
+import type { HostCallbackFunction } from "../src/etc/types";
+import type { HakoRuntime } from "../src/host/runtime";
+import type { VMContext } from "../src/vm/context";
+import type { VMValue } from "../src/vm/value";
 
 describe("ValueFactory", () => {
   let runtime: HakoRuntime;
@@ -16,8 +13,9 @@ describe("ValueFactory", () => {
   // Helper to load WASM binary
   const loadWasmBinary = async () => {
     // Adjust the path as necessary for your project
-    const wasmPath = path.join(__dirname, "../../../bridge/build/hako.wasm");
-    return await fs.readFile(wasmPath);
+    const wasmPath = await Bun.file("../../bridge/build/hako.wasm").bytes();
+
+    return wasmPath;
   };
 
   beforeEach(async () => {
@@ -319,7 +317,8 @@ describe("ValueFactory", () => {
       };
 
       using fnVal = context.newValue(testFn, { name: "testFn" });
-      using result = context.callFunction(fnVal, null);
+
+      using result = context.callFunction(fnVal, undefined);
 
       expect(result.error).toBeUndefined();
       expect(result.unwrap().isUndefined()).toBe(true);
@@ -504,7 +503,8 @@ describe("ValueFactory", () => {
       using errorVal = context.newValue(jsError);
 
       using stack = errorVal.getProperty("stack");
-      expect(stack.asString()).toEqual(jsError.stack);
+      expect(jsError.stack).toBeDefined();
+      expect(stack.asString()).toEqual(jsError.stack as string);
     });
 
     it("should create Error with cause", () => {
@@ -529,44 +529,6 @@ describe("ValueFactory", () => {
 
       expect(message.asString()).toBe("Type error message");
       expect(name.asString()).toBe("TypeError");
-    });
-  });
-
-  // Caching Tests
-  describe("Value Caching", () => {
-    it("should cache undefined value", () => {
-      using undefined1 = context.newValue(undefined);
-      using undefined2 = context.newValue(undefined);
-
-      expect(undefined1.getHandle()).toBe(undefined2.getHandle());
-    });
-
-    it("should cache null value", () => {
-      using null1 = context.newValue(null);
-      using null2 = context.newValue(null);
-
-      expect(null1.getHandle()).toBe(null2.getHandle());
-    });
-
-    it("should cache true value", () => {
-      using true1 = context.newValue(true);
-      using true2 = context.newValue(true);
-
-      expect(true1.getHandle()).toBe(true2.getHandle());
-    });
-
-    it("should cache false value", () => {
-      using false1 = context.newValue(false);
-      using false2 = context.newValue(false);
-
-      expect(false1.getHandle()).toBe(false2.getHandle());
-    });
-
-    it("should cache global object", () => {
-      using globalObj1 = context.getGlobalObject();
-      using globalObj2 = context.getGlobalObject();
-
-      expect(globalObj1.getHandle()).toBe(globalObj2.getHandle());
     });
   });
 

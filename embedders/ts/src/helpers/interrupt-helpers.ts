@@ -7,10 +7,10 @@
  * CPU usage, and memory exhaustion by untrusted code.
  */
 
-import type { HakoRuntime } from "@hako/runtime/runtime";
-import type { InterruptHandler, JSVoid } from "@hako/etc/types";
+import type { InterruptHandler, JSVoid } from "../etc/types";
+import type { HakoRuntime } from "../host/runtime";
 
-import type { VMContext } from "@hako/vm/context";
+import type { VMContext } from "../vm/context";
 
 /**
  * Creates an interrupt handler that terminates execution after a specified time deadline.

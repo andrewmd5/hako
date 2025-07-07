@@ -6,13 +6,14 @@
  * freeing memory in the WebAssembly heap, with special handling for JavaScript values,
  * strings, and arrays of pointers.
  */
+
+import type { HakoExports } from "../etc/ffi";
 import type {
   CString,
   JSContextPointer,
   JSRuntimePointer,
   JSValuePointer,
-} from "@hako/etc/types";
-import type { HakoExports } from "@hako/etc/ffi";
+} from "../etc/types";
 
 /**
  * Handles memory operations for the PrimJS WebAssembly module.
@@ -23,14 +24,6 @@ import type { HakoExports } from "@hako/etc/ffi";
  * with strings, pointers, arrays, and JavaScript values in WebAssembly memory.
  */
 export class MemoryManager {
-  private requiresBufferCopy: boolean;
-  constructor() {
-    // Chrome, Firefox, and Chromium forks don't support using TextDecoder on SharedArrayBuffer.
-    // Safari on the other hand does. Concidentally, the aforementioned browsers are the only ones that have the 'doNotTrack' property on 'navigator'.
-    // so if we detect that property, we can assume that we are in a browser that doesn't support TextDecoder on SharedArrayBuffer.
-    this.requiresBufferCopy =
-      navigator !== undefined && "doNotTrack" in navigator;
-  }
   /**
    * Reference to the WebAssembly exports object, which contains
    * memory management functions and the memory buffer.
@@ -81,9 +74,24 @@ export class MemoryManager {
    * @returns Pointer to the allocated memory
    * @throws Error if memory allocation fails
    */
-  allocateMemory(size: number): number {
+  allocateMemory(ctx: JSContextPointer, size: number): number {
+    if (size <= 0) {
+      throw new Error("Size must be greater than 0");
+    }
     const exports = this.checkExports();
-    const ptr = exports.malloc(size);
+    const ptr = exports.HAKO_Malloc(ctx, size);
+    if (ptr === 0) {
+      throw new Error(`Failed to allocate ${size} bytes of memory`);
+    }
+    return ptr;
+  }
+
+  allocateRuntimeMemory(rt: JSRuntimePointer, size: number): number {
+    if (size <= 0) {
+      throw new Error("Size must be greater than 0");
+    }
+    const exports = this.checkExports();
+    const ptr = exports.HAKO_RuntimeMalloc(rt, size);
     if (ptr === 0) {
       throw new Error(`Failed to allocate ${size} bytes of memory`);
     }
@@ -95,11 +103,32 @@ export class MemoryManager {
    *
    * @param ptr - Pointer to the memory block to free
    */
-  freeMemory(ptr: number): void {
+  freeMemory(ctx: JSContextPointer, ptr: number): void {
     if (ptr !== 0) {
       const exports = this.checkExports();
-      exports.free(ptr);
+      exports.HAKO_Free(ctx, ptr);
     }
+  }
+
+  freeRuntimeMemory(rt: JSRuntimePointer, ptr: number): void {
+    if (ptr !== 0) {
+      const exports = this.checkExports();
+      exports.HAKO_RuntimeFree(rt, ptr);
+    }
+  }
+
+  /**
+   * Writes a Uint8Array to WebAssembly memory.
+   * @param bytes - Uint8Array to write to WebAssembly memory
+   * @returns Pointer to the allocated memory
+   */
+  writeBytes(ctx: JSContextPointer, bytes: Uint8Array): number {
+    const exports = this.checkExports();
+    const ptr = this.allocateMemory(ctx, bytes.byteLength);
+
+    const memory = new Uint8Array(exports.memory.buffer);
+    memory.set(bytes.subarray(0, bytes.byteLength), ptr);
+    return ptr;
   }
 
   /**
@@ -111,14 +140,39 @@ export class MemoryManager {
    * @param str - JavaScript string to convert to a C string
    * @returns Pointer to the C string in WebAssembly memory
    */
-  allocateString(str: string): CString {
+  allocateString(ctx: JSContextPointer, str: string): CString {
     const exports = this.checkExports();
     const bytes = this.encoder.encode(str);
-    const ptr = this.allocateMemory(bytes.length + 1);
+    const ptr = this.allocateMemory(ctx, bytes.byteLength + 1);
     const memory = new Uint8Array(exports.memory.buffer);
     memory.set(bytes, ptr);
     memory[ptr + bytes.length] = 0; // Null terminator
     return ptr;
+  }
+
+  copy(offset: number, length: number): Uint8Array {
+    const exports = this.checkExports();
+    const memory = new Uint8Array(exports.memory.buffer);
+    return memory.slice(offset, offset + length);
+  }
+
+  slice(offset: number, length: number): Uint8Array {
+    const exports = this.checkExports();
+    const memory = new Uint8Array(exports.memory.buffer);
+    return memory.subarray(offset, offset + length);
+  }
+
+  writeNullTerminatedString(
+    ctx: JSContextPointer,
+    str: string
+  ): { pointer: CString; length: number } {
+    const exports = this.checkExports();
+    const bytes = this.encoder.encode(str);
+    const ptr = this.allocateMemory(ctx, bytes.byteLength + 1);
+    const memory = new Uint8Array(exports.memory.buffer);
+    memory.set(bytes, ptr);
+    memory[ptr + bytes.length] = 0; // Null terminator
+    return { pointer: ptr, length: bytes.length + 1 };
   }
 
   /**
@@ -134,7 +188,7 @@ export class MemoryManager {
 
     let end = ptr;
     while (memory[end] !== 0) end++;
-    
+
     return this.decoder.decode(memory.subarray(ptr, end));
   }
 
@@ -184,19 +238,6 @@ export class MemoryManager {
   }
 
   /**
-   * Frees a void pointer allocated by PrimJS.
-   *
-   * @param ctx - PrimJS context pointer
-   * @param ptr - Pointer to free
-   */
-  freeVoidPointer(ctx: JSContextPointer, ptr: number): void {
-    if (ptr !== 0) {
-      const exports = this.checkExports();
-      exports.HAKO_FreeVoidPointer(ctx, ptr);
-    }
-  }
-
-  /**
    * Duplicates a JavaScript value pointer.
    *
    * This creates a new reference to the same JavaScript value,
@@ -223,10 +264,15 @@ export class MemoryManager {
    */
   newArrayBuffer(ctx: JSContextPointer, data: Uint8Array): JSValuePointer {
     const exports = this.checkExports();
-    const bufPtr = this.allocateMemory(data.length);
+
+    if (data.byteLength === 0) {
+      return exports.HAKO_NewArrayBuffer(ctx, 0, 0);
+    }
+
+    const bufPtr = this.allocateMemory(ctx, data.byteLength);
     const memory = new Uint8Array(exports.memory.buffer);
     memory.set(data, bufPtr);
-    return exports.HAKO_NewArrayBuffer(ctx, bufPtr, data.length);
+    return exports.HAKO_NewArrayBuffer(ctx, bufPtr, data.byteLength);
   }
 
   /**
@@ -235,8 +281,12 @@ export class MemoryManager {
    * @param count - Number of pointers to allocate space for
    * @returns Pointer to the array in WebAssembly memory
    */
-  allocatePointerArray(count: number): number {
-    return this.allocateMemory(count * 4); // 4 bytes per pointer
+  allocatePointerArray(ctx: JSContextPointer, count: number): number {
+    return this.allocateMemory(ctx, count * 4); // 4 bytes per pointer
+  }
+
+  allocateRuntimePointerArray(rt: JSRuntimePointer, count: number): number {
+    return this.allocateRuntimeMemory(rt, count * 4); // 4 bytes per pointer
   }
 
   /**

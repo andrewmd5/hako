@@ -1,22 +1,13 @@
 {
   "compilerOptions": {
     "baseUrl": ".",
-    "rootDir": "src", 
-    "paths": {
-      "@hako/*": [
-        "src/*"
-      ]
-    },
-    "lib": [
-      "ESNext",
-      "DOM"
-    ],
+    "rootDir": "src",
+    "lib": ["ESNext", "DOM"],
     "target": "ESNext",
     "module": "ESNext",
     "moduleDetection": "force",
     "jsx": "react-jsx",
     "allowJs": true,
-
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
@@ -29,14 +20,8 @@
     "noPropertyAccessFromIndexSignature": false,
     "declaration": true,
     "emitDeclarationOnly": true,
-    "outDir": "./dist"
+    "declarationMap": true
   },
-  "include": [
-    "src"
-  ],
-  "exclude": [
-    "node_modules",
-    "dist",
-    "**/*.test.ts"
-  ]
+  "include": ["src"],
+  "exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.spec.ts"]
 }

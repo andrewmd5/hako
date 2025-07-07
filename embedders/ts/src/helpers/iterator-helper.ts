@@ -1,8 +1,8 @@
-import type { VMContextResult } from "@hako/etc/types";
-import { DisposableResult } from "@hako/mem/lifetime";
-import type { HakoRuntime } from "@hako/runtime/runtime";
-import type { VMContext } from "@hako/vm/context";
-import { VMValue } from "@hako/vm/value";
+import type { VMContextResult } from "../etc/types";
+import type { HakoRuntime } from "../host/runtime";
+import { DisposableResult } from "../mem/lifetime";
+import type { VMContext } from "../vm/context";
+import { VMValue } from "../vm/value";
 
 /**
  * Proxies the iteration protocol from the host to a guest iterator.

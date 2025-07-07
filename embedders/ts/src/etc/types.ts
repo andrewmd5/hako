@@ -1,9 +1,10 @@
-import type { HakoRuntime } from "@hako/runtime/runtime";
-import type { VMContext } from "@hako/vm/context";
-import type { VMValue } from "@hako/vm/value";
-import { PrimJSError } from "@hako/etc/errors";
-import type { DisposableResult } from "@hako/mem/lifetime";
-import type { VmCallResult } from "@hako/vm/vm-interface";
+import { PrimJSError } from "../etc/errors";
+import type { HakoRuntime } from "../host/runtime";
+import type { DisposableResult } from "../mem/lifetime";
+import type { CModuleInitializer } from "../vm/cmodule";
+import type { VMContext } from "../vm/context";
+import type { VMValue } from "../vm/value";
+import type { VmCallResult } from "../vm/vm-interface";
 
 /**
  * Opaque type helper that wraps a basic type with a specific string tag
@@ -47,6 +48,11 @@ export type JSValuePointer = number;
  * Maps to LEPUSValueConst* in C code.
  */
 export type JSValueConstPointer = number;
+
+/**
+ * A numerical value representing the JavaScript type of a value.
+ */
+export type HAKOTypeOf = number;
 
 /**
  * JavaScript property atom identifier. Represents a property name
@@ -95,6 +101,8 @@ export const LEPUS_FALSE: LEPUS_BOOL = 0;
  */
 export const LEPUS_TRUE: LEPUS_BOOL = 1;
 
+export type LEPUSModuleDef = number;
+
 /**
  * Converts a LEPUS_BOOL value to a JavaScript boolean.
  *
@@ -128,18 +136,26 @@ export function LEPUS_BOOLToBoolean(value: LEPUS_BOOL): boolean {
 export type HostCallbackFunction<VmHandle> = (
   this: VmHandle,
   ...args: VmHandle[]
-  // biome-ignore lint/suspicious/noConfusingVoidType: <explanation>
+  // biome-ignore lint/suspicious/noConfusingVoidType: you're annoying
 ) => VmHandle | VmCallResult<VmHandle> | void;
+
+export type ModuleLoaderResult =
+  | { type: "source"; data: string } // Source code
+  | { type: "precompiled"; data: number } // Pointer to LEPUSModuleDef
+  | { type: "error" } // Module not found
+  | null;
 
 /**
  * Function used to load JavaScript module source code.
  *
  * @param moduleName - The name of the module to load
+ * @param attributes - Import attributes object (e.g., { type: "json" })
  * @returns The module source code as a string, null if not found, or a Promise resolving to either
  */
 export type ModuleLoaderFunction = (
-  moduleName: string
-) => string | null | Promise<string | null>;
+  moduleName: string,
+  attributes?: Record<string, string>
+) => ModuleLoaderResult | Promise<ModuleLoaderResult>;
 
 /**
  * Function used to normalize module specifiers to absolute module names.
@@ -152,6 +168,49 @@ export type ModuleNormalizerFunction = (
   baseName: string,
   moduleName: string
 ) => string | Promise<string>;
+
+/**
+ * Function used to resolve module names (import.meta.resolve).
+ *
+ * @param moduleName - The module name to resolve
+ * @param currentModule - The current module context
+ * @returns The fully qualified path to the module, or undefined if not found
+ */
+export type ModuleResolverFunction = (
+  moduleName: string,
+  currentModule?: string
+) => string | undefined;
+
+/**
+ * Function used to initialize a C module.
+ * This is called when the module is loaded into the runtime.
+ *
+ * @param module - The CModuleInitializer instance representing the module
+ * @returns A status code indicating success (0) or failure (non-zero)
+ */
+export type ModuleInitFunction = (module: CModuleInitializer) => number;
+
+/**
+ * Function used to finalize a C classes
+ */
+export type ClassConstructorHandler = (
+  context: VMContext,
+  newTarget: VMValue,
+  args: VMValue[],
+  classId: number
+) => VMValue;
+
+export type ClassFinalizerHandler = (
+  runtime: HakoRuntime,
+  opaque: number,
+  classId: number
+) => void;
+
+export interface ClassOptions {
+  finalizer?: ClassFinalizerHandler;
+  methods?: Record<string, HostCallbackFunction<VMValue>>;
+  staticMethods?: Record<string, HostCallbackFunction<VMValue>>;
+}
 
 /**
  * Basic interrupt handler function signature for C callbacks.
@@ -290,15 +349,15 @@ export enum Intrinsic {
   // Common sets of features
   /** Default set of features for most contexts */
   Default = BaseObjects |
-  Date |
-  Eval |
-  StringNormalize |
-  RegExp |
-  JSON |
-  MapSet |
-  TypedArrays |
-  Promise |
-  BigInt,
+    Date |
+    Eval |
+    StringNormalize |
+    RegExp |
+    JSON |
+    MapSet |
+    TypedArrays |
+    Promise |
+    BigInt,
   /** Minimal functionality (only BaseObjects) */
   Basic = BaseObjects,
   /** All available features */
@@ -568,6 +627,16 @@ export function evalOptionsToFlags(
     return EvalFlag.Global;
   }
 
+  if (
+    evalOptions.type !== undefined &&
+    evalOptions.type !== "global" &&
+    evalOptions.type !== "module"
+  ) {
+    throw new PrimJSError(
+      `Invalid eval type: ${evalOptions.type}. Must be "global" or "module".`
+    );
+  }
+
   const { type, strict, compileOnly, noPersist } = evalOptions;
   let flags = 0;
   if (type === "global") flags |= EvalFlag.Global;
@@ -592,7 +661,7 @@ export type PromiseState =
   | "fulfilled"
   /** Promise has been rejected with a reason */
   | "rejected";
-  
+
 //=============================================================================
 // Equality Operations
 //=============================================================================
@@ -673,17 +742,14 @@ export enum ABIJSType {
  * String representation of JavaScript types, aligned with typeof operator results.
  */
 export type JSType =
-  | "null"
   | "undefined"
+  | "object"
+  | "string"
+  | "symbol"
   | "boolean"
   | "number"
-  | "string"
-  | "object"
-  | "function"
-  | "symbol"
   | "bigint"
-  | "module"
-  | "unknown";
+  | "function";
 
 //=============================================================================
 // Value Lifecycle Management

@@ -1,0 +1,37 @@
+From 43cb882ae30ef37e2e11a03f588d2041140b3ce5 Mon Sep 17 00:00:00 2001
+From: Andrew Sampson <andrew@Andrews-Mac-Studio.local>
+Date: Sat, 5 Jul 2025 23:45:21 +0900
+Subject: [PATCH] fix: remove wrong set import meta
+
+---
+ src/interpreter/quickjs/source/quickjs.cc | 7 +------
+ 1 file changed, 1 insertion(+), 6 deletions(-)
+
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 3735641..fb400f4 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -26988,6 +26988,7 @@ int add_star_export_entry(LEPUSContext *ctx, LEPUSModuleDef *m,
+ /* create a C module */
+ LEPUSModuleDef *LEPUS_NewCModule(LEPUSContext *ctx, const char *name_str,
+                                  LEPUSModuleInitFunc *func) {
++                                  
+   LEPUSModuleDef *m;
+   JSAtom name;
+   name = LEPUS_NewAtom(ctx, name_str);
+@@ -34012,12 +34013,6 @@ LEPUSValue LEPUS_EvalBinary(LEPUSContext *ctx, const uint8_t *buf,
+             return LEPUS_EXCEPTION;
+         }
+         
+-        if (LEPUS_SetImportMeta(ctx, obj, TRUE, TRUE) < 0) {
+-            LEPUS_FreeValue(ctx, obj);
+-            js_free_modules(ctx, JS_FREE_MODULE_NOT_EVALUATED);
+-            return LEPUS_EXCEPTION;
+-        }
+-        
+         result = LEPUS_EvalFunction(ctx, obj, ctx->global_obj);
+         
+         if (LEPUS_IsException(result)) {
+-- 
+2.45.2
+

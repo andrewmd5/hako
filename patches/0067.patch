@@ -1,0 +1,2373 @@
+From 9e3c019598685d719525bd39a7ddbe1198cc834f Mon Sep 17 00:00:00 2001
+From: Andrew Sampson <andrew@Andrews-Mac-Studio.local>
+Date: Sat, 5 Jul 2025 11:37:34 +0900
+Subject: [PATCH] feat: binary bytecode eval
+
+**Add bytecode binary evaluation and ES module enhancements**
+
+- Implement bytecode binary evaluation with proper module loading
+- Add import.meta support with resolve() function and path properties
+- Add static class initializers for ES6 classes
+- Fix memory leaks in runtime cleanup and function source handling
+- Enhance module resolution with new callback system
+- Add optional chaining improvements and parsing fixes
+- Fix peek_token functionality and identifier parsing edge cases
+---
+ .../quickjs/include/quickjs-atom.h            |    1 +
+ .../quickjs/include/quickjs-inner.h           |   43 +-
+ .../quickjs/include/quickjs-opcode.h          |    3 +
+ src/interpreter/quickjs/include/quickjs.h     |   26 +-
+ .../quickjs/source/quickjs-libc.cc            |    1 +
+ src/interpreter/quickjs/source/quickjs.cc     | 1308 ++++++++++++-----
+ 6 files changed, 1038 insertions(+), 344 deletions(-)
+
+diff --git a/src/interpreter/quickjs/include/quickjs-atom.h b/src/interpreter/quickjs/include/quickjs-atom.h
+index 61a30a1..48bc54c 100644
+--- a/src/interpreter/quickjs/include/quickjs-atom.h
++++ b/src/interpreter/quickjs/include/quickjs-atom.h
+@@ -156,6 +156,7 @@ DEF(brand, "<brand>")
+ DEF(hash_constructor, "#constructor")
+ DEF(as, "as")
+ DEF(from, "from")
++DEF(meta, "meta")
+ DEF(_default_, "*default*")
+ DEF(_star_, "*")
+ DEF(Module, "Module")
+diff --git a/src/interpreter/quickjs/include/quickjs-inner.h b/src/interpreter/quickjs/include/quickjs-inner.h
+index 97786bc..12f0de8 100644
+--- a/src/interpreter/quickjs/include/quickjs-inner.h
++++ b/src/interpreter/quickjs/include/quickjs-inner.h
+@@ -365,6 +365,7 @@ struct LEPUSRuntime {
+ 
+   LEPUSModuleNormalizeFunc *module_normalize_func;
+   LEPUSModuleLoaderFunc *module_loader_func;
++  LEPUSModuleResolveFunc *module_resolve_func;
+   void *module_loader_opaque;
+ 
+   BOOL can_block : 8; /* TRUE if Atomics.wait can block */
+@@ -878,15 +879,31 @@ typedef enum {
+ } JSVarKindEnum;
+ 
+ typedef struct JSVarDef {
+-  JSAtom var_name;
+-  int scope_level; /* index into fd->scopes of this variable lexical scope */
+-  int scope_next;  /* index into fd->vars of the next variable in the
+-                    * same or enclosing lexical scope */
+-  uint8_t is_const : 1;
+-  uint8_t is_lexical : 1;
+-  uint8_t is_captured : 1;
+-  uint8_t var_kind : 4;   /* see JSVarKindEnum */
+-  int func_pool_idx : 24; /* only used during compilation */
++    JSAtom var_name;
++    /* index into fd->scopes of this variable lexical scope */
++    int scope_level;
++    /* during compilation:
++        - if scope_level = 0: scope in which the variable is defined
++        - if scope_level != 0: index into fd->vars of the next
++          variable in the same or enclosing lexical scope
++       in a bytecode function:
++       index into fd->vars of the next
++       variable in the same or enclosing lexical scope
++    */
++    int scope_next;
++    uint8_t is_const : 1;
++    uint8_t is_lexical : 1;
++    uint8_t is_captured : 1;
++    uint8_t is_static_private : 1; /* only used during private class field parsing */
++    uint8_t var_kind : 4; /* see JSVarKindEnum */
++    /* only used during compilation: function pool index for lexical
++       variables with var_kind =
++       JS_VAR_FUNCTION_DECL/JS_VAR_NEW_FUNCTION_DECL or scope level of
++       the definition of the 'var' variables (they have scope_level =
++       0) */
++    int func_pool_idx : 24; /* only used during compilation : index in
++                               the constant pool for hoisted function
++                               definition */
+ } JSVarDef;
+ 
+ /* for the encoding of the pc2line table */
+@@ -966,6 +983,7 @@ typedef struct LEPUSFunctionBytecode {
+   uint8_t arguments_allowed : 1;
+   uint8_t has_debug : 1;
+   uint8_t read_only_bytecode : 1;
++  uint8_t is_direct_or_indirect_eval : 1; /* used by JS_GetScriptOrModuleName() */
+   /* XXX: 4 bits available */
+   uint8_t *byte_code_buf; /* (self pointer) */
+   int byte_code_len;
+@@ -1165,6 +1183,8 @@ struct LEPUSModuleDef {
+      eval_exception */
+   BOOL eval_has_exception : 8;
+   LEPUSValue eval_exception;
++  LEPUSValue meta_obj; /* for import.meta */
++  LEPUSValue private_value; /* private value for C modules */
+ };
+ 
+ typedef struct JSJobEntry {
+@@ -1509,6 +1529,7 @@ typedef enum {
+   OP_SPECIAL_OBJECT_NEW_TARGET,
+   OP_SPECIAL_OBJECT_HOME_OBJECT,
+   OP_SPECIAL_OBJECT_VAR_OBJECT,
++  OP_SPECIAL_OBJECT_IMPORT_META,
+ } OPSpecialObjectEnum;
+ 
+ #define FUNC_RET_AWAIT 0
+@@ -2028,6 +2049,8 @@ typedef struct JSToken {
+   } u;
+ } JSToken;
+ 
++static LEPUSValue js_import_meta(LEPUSContext *ctx);
++
+ #ifndef NO_QUICKJS_COMPILER
+ LEPUSValue js_dynamic_import(LEPUSContext *ctx, LEPUSValueConst specifier);
+ #endif
+@@ -2380,6 +2403,7 @@ QJS_HIDE int emit_push_const(JSParseState *s, LEPUSValueConst val,
+                              BOOL as_atom);
+ QJS_HIDE void emit_line_num(JSParseState *s, bool is_get_var);
+ QJS_HIDE void emit_op(JSParseState *s, uint8_t val);
++QJS_HIDE void emit_label_raw(JSParseState *s, int label);
+ QJS_HIDE int emit_label(JSParseState *s, int label);
+ QJS_HIDE void emit_return(JSParseState *s, BOOL hasval);
+ QJS_HIDE int emit_goto(JSParseState *s, int opcode, int label);
+@@ -2433,6 +2457,7 @@ typedef enum JSParseFunctionEnum {
+   JS_PARSE_FUNC_GETTER,
+   JS_PARSE_FUNC_SETTER,
+   JS_PARSE_FUNC_METHOD,
++  JS_PARSE_FUNC_CLASS_STATIC_INIT,
+   JS_PARSE_FUNC_CLASS_CONSTRUCTOR,
+   JS_PARSE_FUNC_DERIVED_CLASS_CONSTRUCTOR,
+ } JSParseFunctionEnum;
+diff --git a/src/interpreter/quickjs/include/quickjs-opcode.h b/src/interpreter/quickjs/include/quickjs-opcode.h
+index b2dd55e..bf702b2 100644
+--- a/src/interpreter/quickjs/include/quickjs-opcode.h
++++ b/src/interpreter/quickjs/include/quickjs-opcode.h
+@@ -302,6 +302,9 @@ def(scope_put_var_init, 7, 0, 2, atom_u16) /* emitted in phase 1, removed in pha
+ def(scope_get_private_field, 7, 1, 1, atom_u16) /* obj -> value, emitted in phase 1, removed in phase 2 */
+ def(scope_get_private_field2, 7, 1, 2, atom_u16) /* obj -> obj value, emitted in phase 1, removed in phase 2 */
+ def(scope_put_private_field, 7, 1, 1, atom_u16) /* obj value ->, emitted in phase 1, removed in phase 2 */
++def(get_field_opt_chain, 5, 1, 1, atom) /* emitted in phase 1, removed in phase 2 */
++def(get_array_el_opt_chain, 1, 2, 1, none) /* emitted in phase 1, removed in phase 2 */
++def( set_class_name, 5, 1, 1, u32) /* emitted in phase 1, removed in phase 2 */
+ 
+ // <Primjs begin>
+ def(line_num, 9, 0, 0, u64) /* emitted in phase 1, removed in phase 3 */
+diff --git a/src/interpreter/quickjs/include/quickjs.h b/src/interpreter/quickjs/include/quickjs.h
+index 018c0cb..a33c915 100644
+--- a/src/interpreter/quickjs/include/quickjs.h
++++ b/src/interpreter/quickjs/include/quickjs.h
+@@ -1168,9 +1168,7 @@ LEPUS_BOOL LEPUS_DetectModule(const char *input, size_t input_len);
+ LEPUSValue LEPUS_Eval(LEPUSContext *ctx, const char *input, size_t input_len,
+                       const char *filename, int eval_flags);
+                       
+-#define LEPUS_EVAL_BINARY_LOAD_ONLY (1 << 0) /* only load the module */
+-LEPUSValue LEPUS_EvalBinary(LEPUSContext *ctx, const uint8_t *buf,
+-                            size_t buf_len, int flags);
++
+ LEPUSValue LEPUS_GetGlobalObject(LEPUSContext *ctx);
+ 
+ /* trace gc begin */
+@@ -1329,6 +1327,18 @@ int LEPUS_GetStripInfo(LEPUSRuntime *rt);
+ 
+ typedef struct LEPUSModuleDef LEPUSModuleDef;
+ 
++int LEPUS_SetImportMeta(LEPUSContext *ctx, LEPUSValueConst func_val,
++                              LEPUS_BOOL use_realpath, LEPUS_BOOL is_main);
++
++LEPUSAtom LEPUS_GetScriptOrModuleName(LEPUSContext *ctx, int n_stack_levels);
++LEPUSAtom LEPUS_GetModuleName(LEPUSContext *ctx, LEPUSModuleDef *m);
++LEPUSValue LEPUS_GetImportMeta(LEPUSContext *ctx, LEPUSModuleDef *m);
++void LEPUS_FreeModuleDef(LEPUSContext *ctx, LEPUSModuleDef *m);
++
++#define LEPUS_EVAL_BINARY_LOAD_ONLY (1 << 0) /* only load the module */
++LEPUSValue LEPUS_EvalBinary(LEPUSContext *ctx, const uint8_t *buf,
++                            size_t buf_len, int flags);
++
+ /* return the module specifier (allocated with lepus_malloc()) or NULL if
+    exception */
+ typedef char *LEPUSModuleNormalizeFunc(LEPUSContext *ctx,
+@@ -1337,6 +1347,11 @@ typedef char *LEPUSModuleNormalizeFunc(LEPUSContext *ctx,
+ typedef LEPUSModuleDef *LEPUSModuleLoaderFunc(LEPUSContext *ctx,
+                                               const char *module_name,
+                                               void *opaque);
++
++typedef char *LEPUSModuleResolveFunc(LEPUSContext *ctx,
++                                     const char *module_name,
++                                     const char *current_module,
++                                     void *opaque);
+                                               
+ 
+ /* module_normalize = NULL is allowed and invokes the default module
+@@ -1344,12 +1359,12 @@ typedef LEPUSModuleDef *LEPUSModuleLoaderFunc(LEPUSContext *ctx,
+ void LEPUS_SetModuleLoaderFunc(LEPUSRuntime *rt,
+                                LEPUSModuleNormalizeFunc *module_normalize,
+                                LEPUSModuleLoaderFunc *module_loader,
++                               LEPUSModuleResolveFunc *module_resolve,
+                                void *opaque);
+ 
+-                               
+-
+ LEPUSValue LEPUS_GetModuleNamespace(LEPUSContext *ctx, struct LEPUSModuleDef *m);
+ 
++
+ /* LEPUS Job support */
+ 
+ typedef LEPUSValue LEPUSJobFunc(LEPUSContext *ctx, int argc,
+@@ -1623,6 +1638,7 @@ QJS_EXPORT_FOR_DEVTOOL int get_sleb128_u64(int64_t *pval, const uint8_t *buf,
+ QJS_EXPORT_FOR_DEVTOOL __attribute__((warn_unused_result)) int
+ lepus_get_length32(LEPUSContext *ctx, uint32_t *pres, LEPUSValueConst obj);
+ void SetLynxTargetSdkVersion(LEPUSContext *ctx, const char *version);
++void SetDebugInfoOutside(LEPUSContext *ctx, bool enable);
+ 
+ /*
+  register lepus::Value::ValueType's value in qjs runtime for lepusng,
+diff --git a/src/interpreter/quickjs/source/quickjs-libc.cc b/src/interpreter/quickjs/source/quickjs-libc.cc
+index ce727d4..6b62792 100644
+--- a/src/interpreter/quickjs/source/quickjs-libc.cc
++++ b/src/interpreter/quickjs/source/quickjs-libc.cc
+@@ -525,6 +525,7 @@ void lepus_std_loop(LEPUSContext *ctx) {
+ void lepus_std_eval_binary(LEPUSContext *ctx, const uint8_t *buf,
+                            size_t buf_len, int flags) {
+   LEPUSValue val;
++
+   val = LEPUS_EvalBinary(ctx, buf, buf_len, flags);
+   if (LEPUS_IsException(val)) {
+     lepus_std_dump_error(ctx);
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index e56c384..3735641 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -265,6 +265,10 @@ QJS_STATIC LEPUSValue JS_EvalObject(LEPUSContext *ctx, LEPUSValueConst this_obj,
+ LEPUSValue __attribute__((format(printf, 2, 3)))
+ LEPUS_ThrowInternalError(LEPUSContext *ctx, const char *fmt, ...);
+ 
++#if defined(ENABLE_QUICKJS_DEBUGGER) || defined(DUMP_BYTECODE) 
++void ComputeLineCol(int64_t line_col_num, int32_t *line, int64_t *column);
++#endif
++
+ // <Primjs begin>
+ #if defined(DUMP_QJS_VALUE)
+ static __attribute__((unused)) void JS_DumpAtoms(LEPUSRuntime *rt);
+@@ -1705,13 +1709,27 @@ void LEPUS_FreeRuntime(LEPUSRuntime *rt) {
+ #undef write
+   }
+   {
+-    JSMallocState *s = &rt->malloc_state;
++   JSMallocState *s = &rt->malloc_state;
+     if (s->malloc_count > 1) {
+-      if (rt->rt_info) printf("DUMP_LEAKS: %s:1: ", rt->rt_info);
+-      printf("DUMP_LEAKS: Memory leak: %" PRIu64 " bytes lost in %" PRIu64
+-             " block%s\n",
+-             (uint64_t)(s->malloc_size - sizeof(LEPUSRuntime)),
+-             (uint64_t)(s->malloc_count - 1), &"s"[s->malloc_count == 2]);
++        if (rt->rt_info) printf("DUMP_LEAKS: %s:1: ", rt->rt_info);
++        
++        size_t runtime_size = sizeof(LEPUSRuntime);
++        
++        // Debug info - use correct format specifiers
++        printf("DUMP_LEAKS: DEBUG: runtime_size=%zu, malloc_size=%" PRIu64 "\n", 
++               runtime_size, (uint64_t)s->malloc_size);
++        
++        if (runtime_size > 0 && s->malloc_size >= runtime_size) {
++            uint64_t leaked_bytes = s->malloc_size - runtime_size;
++            printf("DUMP_LEAKS: Memory leak: %" PRIu64 " bytes lost in %" PRIu64
++                   " block%s\n",
++                   leaked_bytes,
++                   (uint64_t)(s->malloc_count - 1), 
++                   &"s"[s->malloc_count == 2]);
++        } else {
++            printf("DUMP_LEAKS: Memory tracking inconsistency: malloc_size (%" PRIu64 ") < runtime_size (%zu)\n",
++                   (uint64_t)s->malloc_size, runtime_size);
++        }
+     }
+   }
+ #endif
+@@ -1998,6 +2016,7 @@ LEPUSContext *LEPUS_NewContextRaw(LEPUSRuntime *rt) {
+   PrimInit(ctx);
+   pthread_mutex_unlock(&prim_init_mutex);
+ #endif
++
+   // <primjs end>
+   return ctx;
+ }
+@@ -16806,6 +16825,11 @@ restart:
+             *sp++ = LEPUS_NewObjectProto(ctx, LEPUS_NULL);
+             if (unlikely(LEPUS_IsException(sp[-1]))) goto exception;
+             break;
++          case OP_SPECIAL_OBJECT_IMPORT_META:
++            *sp++ = js_import_meta(ctx);
++            if (unlikely(LEPUS_IsException(sp[-1])))
++                goto exception;
++            break;
+           default:
+             abort();
+         }
+@@ -20550,6 +20574,49 @@ fail:
+ QJS_STATIC void js_gen_debugger_statement(JSParseState *s, LEPUSContext *ctx);
+ #endif
+ 
++/* convert a TOK_IDENT to a keyword when needed */
++static void update_token_ident(JSParseState *s)
++{
++    if (s->token.u.ident.atom <= JS_ATOM_LAST_KEYWORD ||
++        (s->token.u.ident.atom <= JS_ATOM_LAST_STRICT_KEYWORD &&
++         (s->cur_func->js_mode & JS_MODE_STRICT)) ||
++        (s->token.u.ident.atom == JS_ATOM_yield &&
++         ((s->cur_func->func_kind & JS_FUNC_GENERATOR) ||
++          (s->cur_func->func_type == JS_PARSE_FUNC_ARROW &&
++           !s->cur_func->in_function_body && s->cur_func->parent &&
++           (s->cur_func->parent->func_kind & JS_FUNC_GENERATOR)))) ||
++        (s->token.u.ident.atom == JS_ATOM_await &&
++         (s->is_module ||
++          (s->cur_func->func_kind & JS_FUNC_ASYNC) ||
++          s->cur_func->func_type == JS_PARSE_FUNC_CLASS_STATIC_INIT ||
++          (s->cur_func->func_type == JS_PARSE_FUNC_ARROW &&
++           !s->cur_func->in_function_body && s->cur_func->parent &&
++           ((s->cur_func->parent->func_kind & JS_FUNC_ASYNC) ||
++            s->cur_func->parent->func_type == JS_PARSE_FUNC_CLASS_STATIC_INIT))))) {
++        if (s->token.u.ident.has_escape) {
++            s->token.u.ident.is_reserved = TRUE;
++            s->token.val = TOK_IDENT;
++        } else {
++            /* The keywords atoms are pre allocated */
++            s->token.val = s->token.u.ident.atom - 1 + TOK_FIRST_KEYWORD;
++        }
++    }
++}
++
++/* if the current token is an identifier or keyword, reparse it
++   according to the current function type */
++static void reparse_ident_token(JSParseState *s)
++{
++    if (s->token.val == TOK_IDENT ||
++        (s->token.val >= TOK_FIRST_KEYWORD &&
++         s->token.val <= TOK_LAST_KEYWORD)) {
++        s->token.val = TOK_IDENT;
++        s->token.u.ident.is_reserved = FALSE;
++        update_token_ident(s);
++    }
++}
++
++
+ __exception int next_token(JSParseState *s) {
+   const uint8_t *p;
+   int c;
+@@ -21222,61 +21289,101 @@ fail:
+   return -1;
+ }
+ 
+-/* only used for ':' and '=>', 'let' or 'function' look-ahead */
+-/* XXX: handle all unicode cases */
++static int match_identifier(const uint8_t *p, const char *s) {
++    uint32_t c;
++    while (*s) {
++        if ((uint8_t)*s++ != *p++)
++            return 0;
++    }
++    c = *p;
++    if (c >= 128)
++        c = unicode_from_utf8(p, UTF8_CHAR_LEN_MAX, &p);
++    return !lre_js_is_ident_next(c);
++}
++
++/* peek_token() is used to check for the next token in simple cases.
++   It is only used for ':' and '=>', 'let' or 'function' look-ahead.
++   Whitespace and comments are skipped correctly.
++   Then the next token is analyzed, only for specific words.
++   Return values:
++   - '\n' if !no_line_terminator
++   - TOK_ARROW, TOK_IN, TOK_IMPORT, TOK_OF, TOK_EXPORT, TOK_FUNCTION
++   - TOK_IDENT is returned for other identifiers and keywords
++   - otherwise the next character or unicode codepoint is returned.
++ */
+ int peek_token(JSParseState *s, BOOL no_line_terminator) {
+-  const uint8_t *p;
+-  uint32_t c;
+-
+-  /* skip spaces and comments */
+-  for (p = s->buf_ptr;;) {
+-    switch (c = *p++) {
+-      case '\r':
+-      case '\n':
+-        if (no_line_terminator) return '\n';
+-        continue;
+-      case ' ':
+-      case '\t':
+-      case '\v':
+-      case '\f':
+-        continue;
+-      case '/':
+-        if (*p == '/') {
+-          if (no_line_terminator) return '\n';
+-          while (*p && *p != '\r' && *p != '\n') p++;
+-          continue;
+-        }
+-        if (*p == '*') {
+-          while (*++p) {
+-            if ((*p == '\r' || *p == '\n') && no_line_terminator) return '\n';
+-            if (*p == '*' && p[1] == '/') {
+-              p += 2;
+-              break;
++    const uint8_t *p;
++    uint32_t c;
++    /* skip spaces and comments */
++    for (p = s->buf_ptr;;) {
++        switch (c = *p++) {
++        case '\r':
++        case '\n':
++            if (no_line_terminator) return '\n';
++            continue;
++        case ' ':
++        case '\t':
++        case '\v':
++        case '\f':
++            continue;
++        case '/':
++            if (*p == '/') {
++                if (no_line_terminator) return '\n';
++                while (*p && *p != '\r' && *p != '\n') p++;
++                continue;
+             }
+-          }
+-          continue;
+-        }
+-        break;
+-      case '=':
+-        if (*p == '>') return TOK_ARROW;
+-        break;
+-      default:
+-        if (lre_js_is_ident_first(c)) {
+-          if (c == 'i' && *p == 'n' && !lre_js_is_ident_next(p[1]))
+-            return TOK_IN;
+-          if (c == 'o' && *p == 'f' && !lre_js_is_ident_next(p[1]))
+-            return TOK_OF;
+-          else if (c == 'f' && p[0] == 'u' && p[1] == 'n' && p[2] == 'c' &&
+-                   p[3] == 't' && p[4] == 'i' && p[5] == 'o' && p[6] == 'n' &&
+-                   !lre_js_is_ident_next(p[7]))
+-            return TOK_FUNCTION;
+-          else
++            if (*p == '*') {
++                while (*++p) {
++                    if ((*p == '\r' || *p == '\n') && no_line_terminator) return '\n';
++                    if (*p == '*' && p[1] == '/') {
++                        p += 2;
++                        break;
++                    }
++                }
++                continue;
++            }
++            break;
++        case '=':
++            if (*p == '>') return TOK_ARROW;
++            break;
++        case 'i':
++            if (match_identifier(p, "n"))
++                return TOK_IN;
++            if (match_identifier(p, "mport"))
++                return TOK_IMPORT;
++            return TOK_IDENT;
++        case 'o':
++            if (match_identifier(p, "f"))
++                return TOK_OF;
++            return TOK_IDENT;
++        case 'e':
++            if (match_identifier(p, "xport"))
++                return TOK_EXPORT;
+             return TOK_IDENT;
++        case 'f':
++            if (match_identifier(p, "unction"))
++                return TOK_FUNCTION;
++            return TOK_IDENT;
++        case '\\':
++            if (*p == 'u') {
++                if (lre_js_is_ident_first(lre_parse_escape(&p, TRUE)))
++                    return TOK_IDENT;
++            }
++            break;
++        default:
++            if (c >= 128) {
++                c = unicode_from_utf8(p - 1, UTF8_CHAR_LEN_MAX, &p);
++                if (no_line_terminator && (c == CP_PS || c == CP_LS))
++                    return '\n';
++            }
++            if (lre_is_space(c))
++                continue;
++            if (lre_js_is_ident_first(c))
++                return TOK_IDENT;
++            break;
+         }
+-        break;
++        return c;
+     }
+-    return c;
+-  }
+ }
+ 
+ __attribute__((always_inline)) int get_prev_opcode(JSFunctionDef *fd) {
+@@ -21389,6 +21496,13 @@ QJS_STATIC int new_label(JSParseState *s) {
+   return new_label_fd(s->cur_func, -1);
+ }
+ 
++void emit_label_raw(JSParseState *s, int label)
++{
++    emit_u8(s, OP_label);
++    emit_u32(s, label);
++    s->cur_func->label_slots[label].pos = s->cur_func->byte_code.size;
++}
++
+ /* return the label ID offset */
+ int emit_label(JSParseState *s, int label) {
+   if (label >= 0) {
+@@ -22066,37 +22180,50 @@ QJS_STATIC int __exception js_parse_property_name(JSParseState *s,
+                                                   BOOL allow_var,
+                                                   BOOL allow_private) {
+   int is_private = 0;
++  BOOL is_non_reserved_ident;
+   JSAtom name;
+   int prop_type;
+ 
+   prop_type = PROP_TYPE_IDENT;
+   if (allow_method) {
++    /* if allow_private is true (for class field parsing) and
++       get/set is following by ';' (or LF with ASI), then it
++       is a field name */
+     if ((token_is_pseudo_keyword(s, JS_ATOM_get) ||
+          token_is_pseudo_keyword(s, JS_ATOM_set)) &&
+-        peek_token(s, FALSE) != ',' && peek_token(s, FALSE) != '}') {
++        (!allow_private || peek_token(s, TRUE) != '\n')) {
+       /* get x(), set x() */
+       name = LEPUS_DupAtom(s->ctx, s->token.u.ident.atom);
+-      if (next_token(s)) goto fail1;
+-      if (s->token.val == ':' || s->token.val == ',' || s->token.val == '}' ||
+-          s->token.val == '(')
+-        goto done;
++      if (next_token(s))
++        goto fail1;
++      if (s->token.val == ':' || s->token.val == ',' ||
++          s->token.val == '}' || s->token.val == '(' ||
++          s->token.val == '=' ||
++          (s->token.val == ';' && allow_private)) {
++        is_non_reserved_ident = TRUE;
++        goto ident_found;
++      }
+       prop_type = PROP_TYPE_GET + (name == JS_ATOM_set);
+       LEPUS_FreeAtom(s->ctx, name);
+     } else if (s->token.val == '*') {
+-      if (next_token(s)) goto fail;
++      if (next_token(s))
++        goto fail;
+       prop_type = PROP_TYPE_STAR;
+     } else if (token_is_pseudo_keyword(s, JS_ATOM_async) &&
+                peek_token(s, TRUE) != '\n') {
+       name = LEPUS_DupAtom(s->ctx, s->token.u.ident.atom);
+-      if (next_token(s)) goto fail1;
+-      if (s->token.val == '}' || s->token.val == ',') {
+-        prop_type = PROP_TYPE_VAR;
+-        goto done;
++      if (next_token(s))
++        goto fail1;
++      if (s->token.val == ':' || s->token.val == ',' ||
++          s->token.val == '}' || s->token.val == '(' ||
++          s->token.val == '=') {
++        is_non_reserved_ident = TRUE;
++        goto ident_found;
+       }
+-      if (s->token.val == ':' || s->token.val == '(') goto done;
+       LEPUS_FreeAtom(s->ctx, name);
+       if (s->token.val == '*') {
+-        if (next_token(s)) goto fail;
++        if (next_token(s))
++          goto fail;
+         prop_type = PROP_TYPE_ASYNC_STAR;
+       } else {
+         prop_type = PROP_TYPE_ASYNC;
+@@ -22106,20 +22233,26 @@ QJS_STATIC int __exception js_parse_property_name(JSParseState *s,
+ 
+   if (token_is_ident(s->token.val)) {
+     /* variable can only be a non-reserved identifier */
+-    if (s->token.val == TOK_IDENT && !s->token.u.ident.is_reserved &&
++    is_non_reserved_ident =
++        (s->token.val == TOK_IDENT && !s->token.u.ident.is_reserved);
++    /* keywords and reserved words have a valid atom */
++    name = LEPUS_DupAtom(s->ctx, s->token.u.ident.atom);
++    if (next_token(s))
++      goto fail1;
++  ident_found:
++    if (is_non_reserved_ident &&
+         prop_type == PROP_TYPE_IDENT && allow_var) {
+-      int tok = peek_token(s, FALSE);
+-      if (!(tok == ':' || (tok == '(' && allow_method))) {
++      if (!(s->token.val == ':' ||
++            (s->token.val == '(' && allow_method))) {
+         prop_type = PROP_TYPE_VAR;
+       }
+     }
+-    /* keywords and reserved words have a valid atom */
+-    name = LEPUS_DupAtom(s->ctx, s->token.u.ident.atom);
+-    if (next_token(s)) goto fail1;
+   } else if (s->token.val == TOK_STRING) {
+     name = js_value_to_atom(s->ctx, s->token.u.str.str);
+-    if (name == JS_ATOM_NULL) goto fail;
+-    if (next_token(s)) goto fail1;
++    if (name == JS_ATOM_NULL)
++      goto fail;
++    if (next_token(s))
++      goto fail1;
+   } else if (s->token.val == TOK_NUMBER) {
+     LEPUSValue val;
+     val = s->token.u.num.val;
+@@ -22136,16 +22269,22 @@ QJS_STATIC int __exception js_parse_property_name(JSParseState *s,
+     {
+       name = js_value_to_atom(s->ctx, val);
+     }
+-    if (name == JS_ATOM_NULL) goto fail;
+-    if (next_token(s)) goto fail1;
++    if (name == JS_ATOM_NULL)
++      goto fail;
++    if (next_token(s))
++      goto fail1;
+   } else if (s->token.val == '[') {
+-    if (next_token(s)) goto fail;
+-    if (js_parse_expr(s)) goto fail;
+-    if (js_parse_expect(s, ']')) goto fail;
++    if (next_token(s))
++      goto fail;
++    if (js_parse_expr(s))
++      goto fail;
++    if (js_parse_expect(s, ']'))
++      goto fail;
+     name = JS_ATOM_NULL;
+   } else if (s->token.val == TOK_PRIVATE_NAME && allow_private) {
+     name = LEPUS_DupAtom(s->ctx, s->token.u.ident.atom);
+-    if (next_token(s)) goto fail1;
++    if (next_token(s))
++      goto fail1;
+     is_private = PROP_TYPE_PRIVATE;
+   } else {
+     goto invalid_prop;
+@@ -22157,7 +22296,6 @@ QJS_STATIC int __exception js_parse_property_name(JSParseState *s,
+     js_parse_error(s, "invalid property name");
+     goto fail;
+   }
+-done:
+   *pname = name;
+   return prop_type | is_private;
+ fail1:
+@@ -22591,16 +22729,18 @@ int find_private_class_field(LEPUSContext *ctx, JSFunctionDef *fd, JSAtom name,
+ 
+ /* add field in the current scope */
+ QJS_STATIC int add_private_class_field(JSParseState *s, JSFunctionDef *fd,
+-                                       JSAtom name, JSVarKindEnum var_kind) {
++                                       JSAtom name, JSVarKindEnum var_kind, BOOL is_static) {
+   LEPUSContext *ctx = s->ctx;
+   JSVarDef *vd;
+   int idx;
+ 
+   idx = add_scope_var(ctx, fd, name, var_kind);
+-  if (idx < 0) return idx;
++  if (idx < 0)
++      return idx;
+   vd = &fd->vars[idx];
+   vd->is_lexical = 1;
+   vd->is_const = 1;
++  vd->is_static_private = is_static;
+   return idx;
+ }
+ 
+@@ -22639,8 +22779,9 @@ QJS_STATIC JSAtom get_private_setter_name(LEPUSContext *ctx, JSAtom name) {
+ typedef struct {
+   JSFunctionDef *fields_init_fd;
+   int computed_fields_count;
+-  BOOL has_brand;
++  BOOL need_brand;
+   int brand_push_pos;
++  BOOL is_static;
+ } ClassFieldsDef;
+ 
+ QJS_STATIC __exception int emit_class_init_start(JSParseState *s,
+@@ -22652,39 +22793,27 @@ QJS_STATIC __exception int emit_class_init_start(JSParseState *s,
+ 
+   s->cur_func = cf->fields_init_fd;
+ 
+-  /* XXX: would be better to add the code only if needed, maybe in a
+-     later pass */
+-  emit_op(s, OP_push_false); /* will be patched later */
+-  cf->brand_push_pos = cf->fields_init_fd->last_opcode_pos;
+-  label_add_brand = emit_goto(s, OP_if_false, -1);
++  if (!cf->is_static) {
++    /* add the brand to the newly created instance */
++    /* XXX: would be better to add the code only if needed, maybe in a
++       later pass */
++    emit_op(s, OP_push_false); /* will be patched later */
++    cf->brand_push_pos = cf->fields_init_fd->last_opcode_pos;
++    label_add_brand = emit_goto(s, OP_if_false, -1);
+ 
+-  emit_op(s, OP_scope_get_var);
+-  emit_atom(s, JS_ATOM_this);
+-  emit_u16(s, 0);
+-
+-  emit_op(s, OP_scope_get_var);
+-  emit_atom(s, JS_ATOM_home_object);
+-  emit_u16(s, 0);
+-
+-  emit_op(s, OP_add_brand);
+-
+-  emit_label(s, label_add_brand);
++    emit_op(s, OP_scope_get_var);
++    emit_atom(s, JS_ATOM_this);
++    emit_u16(s, 0);
+ 
+-  s->cur_func = s->cur_func->parent;
+-  return 0;
+-}
++    emit_op(s, OP_scope_get_var);
++    emit_atom(s, JS_ATOM_home_object);
++    emit_u16(s, 0);
+ 
+-QJS_STATIC __exception int add_brand(JSParseState *s, ClassFieldsDef *cf) {
+-  if (!cf->has_brand) {
+-    /* define the brand field in 'this' of the initializer */
+-    if (!cf->fields_init_fd) {
+-      if (emit_class_init_start(s, cf)) return -1;
+-    }
+-    /* patch the start of the function to enable the OP_add_brand code */
+-    cf->fields_init_fd->byte_code.buf[cf->brand_push_pos] = OP_push_true;
++    emit_op(s, OP_add_brand);
+ 
+-    cf->has_brand = TRUE;
++    emit_label(s, label_add_brand);
+   }
++  s->cur_func = s->cur_func->parent;
+   return 0;
+ }
+ 
+@@ -22711,7 +22840,7 @@ __exception int js_parse_class(JSParseState *s, BOOL is_class_expr,
+   JSAtom class_var_name = JS_ATOM_NULL;
+   JSFunctionDef *method_fd, *ctor_fd;
+   int saved_js_mode, class_name_var_idx, prop_type, ctor_cpool_offset;
+-  int class_flags = 0, i;
++  int class_flags = 0, i, define_class_offset;
+   BOOL is_static, is_private;
+   const uint8_t *class_start_ptr = s->token.ptr;
+   const uint8_t *start_ptr;
+@@ -22747,7 +22876,6 @@ __exception int js_parse_class(JSParseState *s, BOOL is_class_expr,
+   if (s->token.val == TOK_EXTENDS) {
+     class_flags = JS_DEFINE_CLASS_HAS_HERITAGE;
+     if (next_token(s)) goto fail;
+-      /* XXX: the grammar only allows LeftHandSideExpression */
+ #ifdef ENABLE_COMPATIBLE_MM
+     if (ctx->gc_enable) {
+       if (js_parse_left_hand_side_expr_GC(s)) goto fail;
+@@ -22775,20 +22903,26 @@ __exception int js_parse_class(JSParseState *s, BOOL is_class_expr,
+   ctor_cpool_offset = fd->byte_code.size;
+   emit_u32(s, 0); /* will be patched at the end of the class parsing */
+ 
+-  if (class_var_name != JS_ATOM_NULL && class_name == JS_ATOM_NULL)
+-    class_name1 = JS_ATOM_default;
+-  else
++  if (class_name == JS_ATOM_NULL) {
++    if (class_var_name != JS_ATOM_NULL)
++      class_name1 = JS_ATOM_default;
++    else
++      class_name1 = JS_ATOM_empty_string;
++  } else {
+     class_name1 = class_name;
++  }
+ 
+   emit_op(s, OP_define_class);
+   emit_atom(s, class_name1);
+   emit_u8(s, class_flags);
++  define_class_offset = fd->last_opcode_pos;
+ 
+   for (i = 0; i < 2; i++) {
+     ClassFieldsDef *cf = &class_fields[i];
+     cf->fields_init_fd = NULL;
+     cf->computed_fields_count = 0;
+-    cf->has_brand = FALSE;
++    cf->need_brand = FALSE;
++    cf->is_static = i;
+   }
+ 
+   ctor_fd = NULL;
+@@ -22797,10 +22931,49 @@ __exception int js_parse_class(JSParseState *s, BOOL is_class_expr,
+       if (next_token(s)) goto fail;
+       continue;
+     }
+-    is_static = (s->token.val == TOK_STATIC);
++    is_static = FALSE;
++    if (s->token.val == TOK_STATIC) {
++      int next = peek_token(s, TRUE);
++      if (!(next == ';' || next == '}' || next == '(' || next == '='))
++        is_static = TRUE;
++    }
+     prop_type = -1;
+     if (is_static) {
+       if (next_token(s)) goto fail;
++      if (s->token.val == '{') {
++        ClassFieldsDef *cf = &class_fields[is_static];
++        JSFunctionDef *init;
++        if (!cf->fields_init_fd) {
++          if (emit_class_init_start(s, cf)) goto fail;
++        }
++        s->cur_func = cf->fields_init_fd;
++        /* XXX: could try to avoid creating a new function and
++           reuse 'fields_init_fd' with a specific 'var'
++           scope */
++        // stack is now: <empty>
++        if (js_parse_function_decl2(s, JS_PARSE_FUNC_CLASS_STATIC_INIT,
++                                    JS_FUNC_NORMAL, JS_ATOM_NULL,
++                                    s->token.ptr, s->token.line_num,
++                                    JS_PARSE_EXPORT_NONE, &init) < 0) {
++          goto fail;
++        }
++        // stack is now: fclosure
++        push_scope(s);
++        emit_op(s, OP_scope_get_var);
++        emit_atom(s, JS_ATOM_this);
++        emit_u16(s, 0);
++        // stack is now: fclosure this
++        emit_op(s, OP_swap);
++        // stack is now: this fclosure
++        emit_op(s, OP_call_method);
++        emit_u16(s, 0);
++        // stack is now: returnvalue
++        emit_op(s, OP_drop);
++        // stack is now: <empty>
++        pop_scope(s);
++        s->cur_func = s->cur_func->parent;
++        continue;
++      }
+       /* allow "static" field name */
+       if (s->token.val == ';' || s->token.val == '=') {
+         is_static = FALSE;
+@@ -22836,24 +23009,27 @@ __exception int js_parse_class(JSParseState *s, BOOL is_class_expr,
+       JSFunctionDef *method_fd;
+ 
+       if (is_private) {
+-        int idx, var_kind;
++        int idx, var_kind, is_static1;
+         idx = find_private_class_field(ctx, fd, name, fd->scope_level);
+         if (idx >= 0) {
+           var_kind = fd->vars[idx].var_kind;
++          is_static1 = fd->vars[idx].is_static_private;
+           if (var_kind == JS_VAR_PRIVATE_FIELD ||
+               var_kind == JS_VAR_PRIVATE_METHOD ||
+               var_kind == JS_VAR_PRIVATE_GETTER_SETTER ||
+-              var_kind == (JS_VAR_PRIVATE_GETTER + is_set)) {
++              var_kind == (JS_VAR_PRIVATE_GETTER + is_set) ||
++              (var_kind == (JS_VAR_PRIVATE_GETTER + 1 - is_set) &&
++               is_static != is_static1)) {
+             goto private_field_already_defined;
+           }
+           fd->vars[idx].var_kind = JS_VAR_PRIVATE_GETTER_SETTER;
+         } else {
+           if (add_private_class_field(s, fd, name,
+                                       static_cast<JSVarKindEnum>(
+-                                          JS_VAR_PRIVATE_GETTER + is_set)) < 0)
++                                          JS_VAR_PRIVATE_GETTER + is_set), is_static) < 0)
+             goto fail;
+         }
+-        if (add_brand(s, &class_fields[is_static]) < 0) goto fail;
++        class_fields[is_static].need_brand = TRUE;
+       }
+ 
+       if (js_parse_function_decl2(
+@@ -22877,7 +23053,7 @@ __exception int js_parse_class(JSParseState *s, BOOL is_class_expr,
+           func_scope.PushLEPUSAtom(setter_name);
+           emit_atom(s, setter_name);
+           ret = add_private_class_field(s, fd, setter_name,
+-                                        JS_VAR_PRIVATE_SETTER);
++                                        JS_VAR_PRIVATE_SETTER, is_static);
+           if (!ctx->gc_enable) LEPUS_FreeAtom(ctx, setter_name);
+           if (ret < 0) goto fail;
+         } else {
+@@ -22909,7 +23085,7 @@ __exception int js_parse_class(JSParseState *s, BOOL is_class_expr,
+         if (find_private_class_field(ctx, fd, name, fd->scope_level) >= 0) {
+           goto private_field_already_defined;
+         }
+-        if (add_private_class_field(s, fd, name, JS_VAR_PRIVATE_FIELD) < 0)
++        if (add_private_class_field(s, fd, name, JS_VAR_PRIVATE_FIELD, is_static) < 0)
+           goto fail;
+         emit_op(s, OP_private_symbol);
+         emit_atom(s, name);
+@@ -22997,7 +23173,7 @@ __exception int js_parse_class(JSParseState *s, BOOL is_class_expr,
+           func_type = JS_PARSE_FUNC_CLASS_CONSTRUCTOR;
+       }
+       if (is_private) {
+-        if (add_brand(s, &class_fields[is_static]) < 0) goto fail;
++        class_fields[is_static].need_brand = TRUE;
+       }
+       if (js_parse_function_decl2(s, func_type, func_kind, JS_ATOM_NULL,
+                                   start_ptr, s->token.line_num,
+@@ -23013,7 +23189,7 @@ __exception int js_parse_class(JSParseState *s, BOOL is_class_expr,
+           js_parse_error(s, "private class field is already defined");
+           goto fail;
+         }
+-        if (add_private_class_field(s, fd, name, JS_VAR_PRIVATE_METHOD) < 0)
++        if (add_private_class_field(s, fd, name, JS_VAR_PRIVATE_METHOD, is_static) < 0)
+           goto fail;
+         emit_op(s, OP_set_home_object);
+         emit_op(s, OP_set_name);
+@@ -23051,7 +23227,7 @@ __exception int js_parse_class(JSParseState *s, BOOL is_class_expr,
+ 
+   /* store the class source code in the constructor. */
+   if (!fd->strip_source) {
+-    system_free(ctor_fd->source);
++    lepus_free(ctx, ctor_fd->source);
+     auto offset = ctor_fd->src_start - (const char *)class_start_ptr;
+     for (uint32_t i = 0, size = ctor_fd->caller_count; i < size; ++i) {
+       auto &slot = ctor_fd->caller_slots[i];
+@@ -23059,19 +23235,35 @@ __exception int js_parse_class(JSParseState *s, BOOL is_class_expr,
+     }
+     ctor_fd->source_len = s->buf_ptr - class_start_ptr;
+     ctor_fd->source =
+-        js_strmalloc((const char *)class_start_ptr, ctor_fd->source_len);
++        lepus_strndup(ctx, (const char *)class_start_ptr, ctor_fd->source_len);
+     if (!ctor_fd->source) goto fail;
+   }
+ 
+   /* consume the '}' */
+   if (next_token(s)) goto fail;
+ 
+-  /* store the function to initialize the fields to that it can be
+-     referenced by the constructor */
+   {
+     ClassFieldsDef *cf = &class_fields[0];
+     int var_idx;
+ 
++    if (cf->need_brand) {
++      /* add a private brand to the prototype */
++      emit_op(s, OP_dup);
++      emit_op(s, OP_null);
++      emit_op(s, OP_swap);
++      emit_op(s, OP_add_brand);
++
++      /* define the brand field in 'this' of the initializer */
++      if (!cf->fields_init_fd) {
++        if (emit_class_init_start(s, cf)) goto fail;
++      }
++      /* patch the start of the function to enable the
++         OP_add_brand_instance code */
++      cf->fields_init_fd->byte_code.buf[cf->brand_push_pos] = OP_push_true;
++    }
++
++    /* store the function to initialize the fields to that it can be
++       referenced by the constructor */
+     var_idx = define_var(s, fd, JS_ATOM_class_fields_init, JS_VAR_DEF_CONST);
+     if (var_idx < 0) goto fail;
+     if (cf->fields_init_fd) {
+@@ -23087,14 +23279,11 @@ __exception int js_parse_class(JSParseState *s, BOOL is_class_expr,
+   /* drop the prototype */
+   emit_op(s, OP_drop);
+ 
+-  /* initialize the static fields */
+-  if (class_fields[1].fields_init_fd != NULL) {
+-    ClassFieldsDef *cf = &class_fields[1];
++  if (class_fields[1].need_brand) {
++    /* add a private brand to the class */
+     emit_op(s, OP_dup);
+-    emit_class_init_end(s, cf);
+-    emit_op(s, OP_call_method);
+-    emit_u16(s, 0);
+-    emit_op(s, OP_drop);
++    emit_op(s, OP_dup);
++    emit_op(s, OP_add_brand);
+   }
+ 
+   if (class_name != JS_ATOM_NULL) {
+@@ -23106,6 +23295,17 @@ __exception int js_parse_class(JSParseState *s, BOOL is_class_expr,
+     emit_atom(s, class_name);
+     emit_u16(s, fd->scope_level);
+   }
++
++  /* initialize the static fields */
++  if (class_fields[1].fields_init_fd != NULL) {
++    ClassFieldsDef *cf = &class_fields[1];
++    emit_op(s, OP_dup);
++    emit_class_init_end(s, cf);
++    emit_op(s, OP_call_method);
++    emit_u16(s, 0);
++    emit_op(s, OP_drop);
++  }
++
+   pop_scope(s);
+   pop_scope(s);
+ 
+@@ -23117,11 +23317,11 @@ __exception int js_parse_class(JSParseState *s, BOOL is_class_expr,
+     emit_u16(s, fd->scope_level);
+   } else {
+     if (class_name == JS_ATOM_NULL) {
+-      /* XXX: should be done before calling the initializers. It
+-         could be done with a specific opcode to patch the code
+-         before */
+-      emit_op(s, OP_set_name);
+-      emit_atom(s, class_name); /* will be patched by assignment */
++      /* cannot use OP_set_name because the name of the class
++         must be defined before the static initializers are
++         executed */
++      emit_op(s, OP_set_class_name);
++      emit_u32(s, fd->last_opcode_pos + 1 - define_class_offset);
+     }
+   }
+ 
+@@ -24031,6 +24231,7 @@ QJS_STATIC __exception int js_parse_postfix_expr(JSParseState *s,
+   FuncCallType call_type;
+   int optional_chaining_label;
+   BOOL accept_lparen = (parse_flags & PF_POSTFIX_CALL) != 0;
++  const uint8_t *op_token_ptr;
+ 
+   call_type = FUNC_CALL_NORMAL;
+   int is_parsing_newnew_pattern = 0;
+@@ -24154,9 +24355,11 @@ QJS_STATIC __exception int js_parse_postfix_expr(JSParseState *s,
+       break;
+     case TOK_IDENT: {
+       JSAtom name;
++      const uint8_t *source_ptr;
+       if (s->token.u.ident.is_reserved) {
+         return js_parse_error_reserved_identifier(s);
+       }
++      source_ptr = s->token.ptr;
+       if ((parse_flags & PF_ARROW_FUNC) && peek_token(s, TRUE) == TOK_ARROW) {
+         if (js_parse_function_decl(s, JS_PARSE_FUNC_ARROW, JS_FUNC_NORMAL,
+                                    JS_ATOM_NULL, s->token.ptr,
+@@ -24164,15 +24367,10 @@ QJS_STATIC __exception int js_parse_postfix_expr(JSParseState *s,
+           return -1;
+       } else if (token_is_pseudo_keyword(s, JS_ATOM_async) &&
+                  peek_token(s, TRUE) != '\n') {
+-        const uint8_t *source_ptr;
+-        int source_line_num;
+-
+-        source_ptr = s->token.ptr;
+-        source_line_num = s->token.line_num;
+         if (next_token(s)) return -1;
+         if (s->token.val == TOK_FUNCTION) {
+           if (js_parse_function_decl(s, JS_PARSE_FUNC_EXPR, JS_FUNC_ASYNC,
+-                                     JS_ATOM_NULL, source_ptr, source_line_num))
++                                     JS_ATOM_NULL, source_ptr, s->token.line_num))
+             return -1;
+         } else if ((parse_flags & PF_ARROW_FUNC) &&
+                    ((s->token.val == '(' &&
+@@ -24181,7 +24379,7 @@ QJS_STATIC __exception int js_parse_postfix_expr(JSParseState *s,
+                      !s->token.u.ident.is_reserved &&
+                      peek_token(s, TRUE) == TOK_ARROW))) {
+           if (js_parse_function_decl(s, JS_PARSE_FUNC_ARROW, JS_FUNC_ASYNC,
+-                                     JS_ATOM_NULL, source_ptr, source_line_num))
++                                     JS_ATOM_NULL, source_ptr, s->token.line_num))
+             return -1;
+         } else {
+           name = LEPUS_DupAtom(s->ctx, JS_ATOM_async);
+@@ -24270,12 +24468,37 @@ QJS_STATIC __exception int js_parse_postfix_expr(JSParseState *s,
+       }
+       break;
+     case TOK_IMPORT:
+-      if (!accept_lparen) return js_parse_error(s, "invalid use of 'import'");
+       if (next_token(s)) return -1;
+-      if (js_parse_expect(s, '(')) return -1;
+-      if (js_parse_assign_expr(s, PF_IN_ACCEPTED)) return -1;
+-      if (js_parse_expect(s, ')')) return -1;
+-      emit_op(s, OP_import);
++      if (s->token.val == '.') {
++        if (next_token(s)) return -1;
++        if (!token_is_pseudo_keyword(s, JS_ATOM_meta))
++          return js_parse_error(s, "meta expected");
++        if (!s->is_module)
++          return js_parse_error(s, "import.meta only valid in module code");
++        if (next_token(s)) return -1;
++        emit_op(s, OP_special_object);
++        emit_u8(s, OP_SPECIAL_OBJECT_IMPORT_META);
++      } else {
++        if (!accept_lparen) return js_parse_error(s, "invalid use of 'import'");
++        if (js_parse_expect(s, '(')) return -1;
++        if (js_parse_assign_expr(s, PF_IN_ACCEPTED)) return -1;
++        if (s->token.val == ',') {
++          if (next_token(s)) return -1;
++          if (s->token.val != ')') {
++            if (js_parse_assign_expr(s, PF_IN_ACCEPTED)) return -1;
++            /* accept a trailing comma */
++            if (s->token.val == ',') {
++              if (next_token(s)) return -1;
++            }
++          } else {
++            emit_op(s, OP_undefined);
++          }
++        } else {
++          emit_op(s, OP_undefined);
++        }
++        if (js_parse_expect(s, ')')) return -1;
++        emit_op(s, OP_import);
++      }
+       break;
+     default:
+       return js_parse_error(s, "unexpected token in expression: '%.*s'",
+@@ -24289,6 +24512,7 @@ QJS_STATIC __exception int js_parse_postfix_expr(JSParseState *s,
+ 
+     if (s->token.val == TOK_QUESTION_MARK_DOT) {
+       if ((parse_flags & PF_POSTFIX_CALL) == 0) return js_parse_error(s, "new keyword cannot be used with an optional chain");
++      op_token_ptr = s->token.ptr;
+       /* optional chaining */
+       if (next_token(s)) return -1;
+       has_optional_chain = TRUE;
+@@ -24305,6 +24529,7 @@ QJS_STATIC __exception int js_parse_postfix_expr(JSParseState *s,
+             s, "template literal cannot appear in an optional chain");
+       }
+       call_type = FUNC_CALL_TEMPLATE;
++      op_token_ptr = s->token.ptr;
+       caller_end = s->token.ptr;
+       goto parse_func_call2;
+     }
+@@ -24325,6 +24550,7 @@ QJS_STATIC __exception int js_parse_postfix_expr(JSParseState *s,
+ 
+       /* function call */
+     parse_func_call:
++      op_token_ptr = s->token.ptr;
+       caller_end = s->token.ptr;
+       if (next_token(s)) return -1;
+ 
+@@ -24337,6 +24563,25 @@ QJS_STATIC __exception int js_parse_postfix_expr(JSParseState *s,
+             fd->byte_code.buf[fd->last_opcode_pos] = OP_get_field2;
+             drop_count = 2;
+             break;
++          case OP_get_field_opt_chain:
++            {
++              int opt_chain_label, next_label;
++              opt_chain_label = get_u32(fd->byte_code.buf +
++                                        fd->last_opcode_pos + 1 + 4 + 1);
++              /* keep the object on the stack */
++              fd->byte_code.buf[fd->last_opcode_pos] = OP_get_field2;
++              fd->byte_code.size = fd->last_opcode_pos + 1 + 4;
++              next_label = emit_goto(s, OP_goto, -1);
++              emit_label(s, opt_chain_label);
++              /* need an additional undefined value for the
++                 case where the optional field does not
++                 exists */
++              emit_op(s, OP_undefined);
++              emit_label(s, next_label);
++              drop_count = 2;
++              opcode = OP_get_field;
++            }
++            break;
+           case OP_scope_get_private_field:
+             /* keep the object on the stack */
+             fd->byte_code.buf[fd->last_opcode_pos] =
+@@ -24348,6 +24593,25 @@ QJS_STATIC __exception int js_parse_postfix_expr(JSParseState *s,
+             fd->byte_code.buf[fd->last_opcode_pos] = OP_get_array_el2;
+             drop_count = 2;
+             break;
++          case OP_get_array_el_opt_chain:
++            {
++              int opt_chain_label, next_label;
++              opt_chain_label = get_u32(fd->byte_code.buf +
++                                        fd->last_opcode_pos + 1 + 1);
++              /* keep the object on the stack */
++              fd->byte_code.buf[fd->last_opcode_pos] = OP_get_array_el2;
++              fd->byte_code.size = fd->last_opcode_pos + 1;
++              next_label = emit_goto(s, OP_goto, -1);
++              emit_label(s, opt_chain_label);
++              /* need an additional undefined value for the
++                 case where the optional field does not
++                 exists */
++              emit_op(s, OP_undefined);
++              emit_label(s, next_label);
++              drop_count = 2;
++              opcode = OP_get_array_el;
++            }
++            break;
+           case OP_scope_get_var: {
+             JSAtom name;
+             int scope;
+@@ -24477,6 +24741,7 @@ QJS_STATIC __exception int js_parse_postfix_expr(JSParseState *s,
+         /* drop the index */
+         emit_op(s, OP_drop);
+ 
++        if (!emit_name_str(s, caller_start, caller_end)) return -1;
+         /* apply function call */
+         switch (opcode) {
+           case OP_get_field:
+@@ -24524,12 +24789,12 @@ QJS_STATIC __exception int js_parse_postfix_expr(JSParseState *s,
+       } else {
+         if (next_token(s)) return -1;
+       emit_func_call:
++        if (!emit_name_str(s, caller_start, caller_end)) return -1;
+         switch (opcode) {
+           case OP_get_field:
+           case OP_scope_get_private_field:
+           case OP_get_array_el:
+           case OP_scope_get_ref:
+-            if (!emit_name_str(s, caller_start, caller_end)) return -1;
+             emit_op(s, OP_call_method);
+             emit_u16(s, arg_count);
+             break;
+@@ -24550,7 +24815,6 @@ QJS_STATIC __exception int js_parse_postfix_expr(JSParseState *s,
+             }
+             break;
+           default:
+-            if (!emit_name_str(s, caller_start, caller_end)) return -1;
+             if (call_type == FUNC_CALL_SUPER_CTOR) {
+               emit_op(s, OP_call_constructor);
+               emit_u16(s, arg_count);
+@@ -24578,8 +24842,10 @@ QJS_STATIC __exception int js_parse_postfix_expr(JSParseState *s,
+       // <Primjs end>
+       call_type = FUNC_CALL_NORMAL;
+     } else if (s->token.val == '.') {
++      op_token_ptr = s->token.ptr;
+       if (next_token(s)) return -1;
+     parse_property:
++      emit_line_num(s, false);
+       if (s->token.val == TOK_PRIVATE_NAME) {
+         /* private class field */
+         if (get_prev_opcode(fd) == OP_get_super) {
+@@ -24614,6 +24880,7 @@ QJS_STATIC __exception int js_parse_postfix_expr(JSParseState *s,
+       if (next_token(s)) return -1;
+     } else if (s->token.val == '[') {
+       int prev_op;
++      op_token_ptr = s->token.ptr;
+     parse_array_access:
+       prev_op = get_prev_opcode(fd);
+       if (has_optional_chain) {
+@@ -24622,6 +24889,7 @@ QJS_STATIC __exception int js_parse_postfix_expr(JSParseState *s,
+       if (next_token(s)) return -1;
+       if (js_parse_expr(s)) return -1;
+       if (js_parse_expect(s, ']')) return -1;
++      emit_line_num(s, false);
+       if (prev_op == OP_get_super) {
+         emit_op(s, OP_get_super_value);
+       } else {
+@@ -24631,10 +24899,27 @@ QJS_STATIC __exception int js_parse_postfix_expr(JSParseState *s,
+       break;
+     }
+   }
+-  if (optional_chaining_label >= 0) emit_label(s, optional_chaining_label);
++  if (optional_chaining_label >= 0) {
++    JSFunctionDef *fd = s->cur_func;
++    int opcode;
++    emit_label_raw(s, optional_chaining_label);
++    /* modify the last opcode so that it is an indicator of an
++       optional chain */
++    opcode = get_prev_opcode(fd);
++    if (opcode == OP_get_field || opcode == OP_get_array_el) {
++      if (opcode == OP_get_field)
++        opcode = OP_get_field_opt_chain;
++      else
++        opcode = OP_get_array_el_opt_chain;
++      fd->byte_code.buf[fd->last_opcode_pos] = opcode;
++    } else {
++      fd->last_opcode_pos = -1;
++    }
++  }
+   return 0;
+ }
+ 
++
+ QJS_STATIC __exception int js_parse_delete(JSParseState *s) {
+   JSFunctionDef *fd = s->cur_func;
+   JSAtom name;
+@@ -24643,26 +24928,57 @@ QJS_STATIC __exception int js_parse_delete(JSParseState *s) {
+   if (next_token(s)) return -1;
+   if (js_parse_unary(s, -1)) return -1;
+   switch (opcode = get_prev_opcode(fd)) {
+-    case OP_get_field: {
+-      LEPUSValue val;
+-      int ret;
+-
+-      name = get_u32(fd->byte_code.buf + fd->last_opcode_pos + 1);
+-      fd->byte_code.size = fd->last_opcode_pos;
+-      fd->last_opcode_pos = -1;
+-      val = JS_AtomToValue_RC(s->ctx, name);
+-      ret = emit_push_const(s, val, 1);
+-      LEPUS_FreeValue(s->ctx, val);
+-      LEPUS_FreeAtom(s->ctx, name);
+-      if (ret) return ret;
+-    }
+-      goto do_delete;
++    case OP_get_field:
++    case OP_get_field_opt_chain:
++      {
++        LEPUSValue val;
++        int ret, opt_chain_label, next_label;
++        if (opcode == OP_get_field_opt_chain) {
++          opt_chain_label = get_u32(fd->byte_code.buf +
++                                    fd->last_opcode_pos + 1 + 4 + 1);
++        } else {
++          opt_chain_label = -1;
++        }
++        name = get_u32(fd->byte_code.buf + fd->last_opcode_pos + 1);
++        fd->byte_code.size = fd->last_opcode_pos;
++        val = JS_AtomToValue_RC(s->ctx, name);
++        ret = emit_push_const(s, val, 1);
++        LEPUS_FreeValue(s->ctx, val);
++        LEPUS_FreeAtom(s->ctx, name);
++        if (ret) return ret;
++        emit_op(s, OP_delete);
++        if (opt_chain_label >= 0) {
++          next_label = emit_goto(s, OP_goto, -1);
++          emit_label(s, opt_chain_label);
++          /* if the optional chain is not taken, return 'true' */
++          emit_op(s, OP_drop);
++          emit_op(s, OP_push_true);
++          emit_label(s, next_label);
++        }
++        fd->last_opcode_pos = -1;
++      }
++      break;
+     case OP_get_array_el:
+       fd->byte_code.size = fd->last_opcode_pos;
+       fd->last_opcode_pos = -1;
+-    do_delete:
+       emit_op(s, OP_delete);
+       break;
++    case OP_get_array_el_opt_chain:
++      {
++        int opt_chain_label, next_label;
++        opt_chain_label = get_u32(fd->byte_code.buf +
++                                  fd->last_opcode_pos + 1 + 1);
++        fd->byte_code.size = fd->last_opcode_pos;
++        emit_op(s, OP_delete);
++        next_label = emit_goto(s, OP_goto, -1);
++        emit_label(s, opt_chain_label);
++        /* if the optional chain is not taken, return 'true' */
++        emit_op(s, OP_drop);
++        emit_op(s, OP_push_true);
++        emit_label(s, next_label);
++        fd->last_opcode_pos = -1;
++      }
++      break;
+     case OP_scope_get_var:
+       /* 'delete this': this is not a reference */
+       name = get_u32(fd->byte_code.buf + fd->last_opcode_pos + 1);
+@@ -26515,6 +26831,8 @@ LEPUSModuleDef *js_new_module_def(LEPUSContext *ctx, JSAtom name) {
+   m->module_ns = LEPUS_UNDEFINED;
+   m->func_obj = LEPUS_UNDEFINED;
+   m->eval_exception = LEPUS_UNDEFINED;
++  m->meta_obj = LEPUS_UNDEFINED;
++  m->private_value = LEPUS_UNDEFINED;
+   list_add_tail(&m->link, &ctx->loaded_modules);
+   return m;
+ }
+@@ -26550,6 +26868,8 @@ QJS_STATIC void js_free_module_def(LEPUSContext *ctx, LEPUSModuleDef *m) {
+   LEPUS_FreeValue(ctx, m->module_ns);
+   LEPUS_FreeValue(ctx, m->func_obj);
+   LEPUS_FreeValue(ctx, m->eval_exception);
++  LEPUS_FreeValue(ctx, m->meta_obj);
++  LEPUS_FreeValue(ctx, m->private_value);
+   list_del(&m->link);
+   lepus_free(ctx, m);
+ }
+@@ -26721,39 +27041,71 @@ fail:
+ void LEPUS_SetModuleLoaderFunc(LEPUSRuntime *rt,
+                                LEPUSModuleNormalizeFunc *module_normalize,
+                                LEPUSModuleLoaderFunc *module_loader,
++                               LEPUSModuleResolveFunc *module_resolve,
+                                void *opaque) {
+   rt->module_normalize_func = module_normalize;
+   rt->module_loader_func = module_loader;
++  rt->module_resolve_func = module_resolve;
+   rt->module_loader_opaque = opaque;
+ }
+ 
+-/* default module filename normalizer */
+ QJS_STATIC char *js_default_module_normalize_name(LEPUSContext *ctx,
+-                                                  const char *base_name,
+-                                                  const char *name) {
+-  char *filename, *p;
++                                                   const char *base_name,
++                                                   const char *name) {
++  char *filename, *p, *clean_name;
+   const char *r;
+-  int len;
+-
+-  if (name[0] != '.') {
++  int len, name_len;
++  
++  // First, strip URL parameters from the name
++  const char *query_start = strchr(name, '?');
++  const char *fragment_start = strchr(name, '#');
++  
++  // Find the earliest parameter marker
++  const char *param_start = NULL;
++  if (query_start && fragment_start) {
++    param_start = (query_start < fragment_start) ? query_start : fragment_start;
++  } else if (query_start) {
++    param_start = query_start;
++  } else if (fragment_start) {
++    param_start = fragment_start;
++  }
++  
++  // Create clean name without parameters
++  if (param_start) {
++    name_len = param_start - name;
++    clean_name = static_cast<char *>(
++        lepus_malloc(ctx, name_len + 1, ALLOC_TAG_WITHOUT_PTR));
++    if (!clean_name) return NULL;
++    memcpy(clean_name, name, name_len);
++    clean_name[name_len] = '\0';
++  } else {
++    clean_name = lepus_strdup(ctx, name);
++    if (!clean_name) return NULL;
++  }
++  
++  if (clean_name[0] != '.') {
+     /* if no initial dot, the module name is not modified */
+-    return lepus_strdup(ctx, name);
++    return clean_name;
+   }
+-
++  
+   p = const_cast<char *>(strrchr(base_name, '/'));
+   if (p)
+     len = p - base_name;
+   else
+     len = 0;
+-
++    
+   filename = static_cast<char *>(
+-      lepus_malloc(ctx, len + strlen(name) + 1 + 1, ALLOC_TAG_WITHOUT_PTR));
+-  if (!filename) return NULL;
++      lepus_malloc(ctx, len + strlen(clean_name) + 1 + 1, ALLOC_TAG_WITHOUT_PTR));
++  if (!filename) {
++    lepus_free(ctx, clean_name);
++    return NULL;
++  }
++  
+   memcpy(filename, base_name, len);
+   filename[len] = '\0';
+-
++  
+   /* we only normalize the leading '..' or '.' */
+-  r = name;
++  r = clean_name;
+   for (;;) {
+     if (r[0] == '.' && r[1] == '/') {
+       r += 2;
+@@ -26767,12 +27119,32 @@ QJS_STATIC char *js_default_module_normalize_name(LEPUSContext *ctx,
+       break;
+     }
+   }
++  
+   if (filename[0] != '\0') strcat(filename, "/");
+   strcat(filename, r);
+-  //    printf("normalize: %s %s -> %s\n", base_name, name, filename);
++  
++  // Clean up the temporary clean_name
++  lepus_free(ctx, clean_name);
++  
++  // printf("normalize: %s %s -> %s\n", base_name, name, filename);
+   return filename;
+ }
+ 
++static LEPUSModuleDef *js_find_loaded_module(LEPUSContext *ctx, JSAtom name)
++{
++    struct list_head *el;
++    LEPUSModuleDef *m;
++
++    /* first look at the loaded modules */
++    list_for_each(el, &ctx->loaded_modules) {
++        m = list_entry(el, LEPUSModuleDef, link);
++        if (m->module_name == name)
++            return m;
++    }
++    return NULL;
++}
++
++
+ /* return NULL in case of exception (e.g. module could not be loaded) */
+ QJS_STATIC LEPUSModuleDef *js_host_resolve_imported_module(
+     LEPUSContext *ctx, JSAtom base_module_name, JSAtom module_name1) {
+@@ -27161,6 +27533,7 @@ QJS_STATIC LEPUSValue js_build_module_ns(LEPUSContext *ctx, LEPUSModuleDef *m) {
+     } else {
+       res = js_resolve_export(ctx, &res_m, &res_me, m, en->export_name);
+     }
++    
+     if (res != JS_RESOLVE_RES_FOUND) {
+       if (res != JS_RESOLVE_RES_AMBIGUOUS) {
+         js_resolve_export_throw_error(ctx, res, m, en->export_name);
+@@ -27170,17 +27543,19 @@ QJS_STATIC LEPUSValue js_build_module_ns(LEPUSContext *ctx, LEPUSModuleDef *m) {
+     } else {
+       if (res_me->local_name == JS_ATOM__star_) {
+         en->export_type = EXPORTED_NAME_NS;
+-        en->u.module =
+-            res_m->req_module_entries[res_me->u.req_module_idx].module;
++        en->u.module = res_m->req_module_entries[res_me->u.req_module_idx].module;
+       } else {
+-        en->export_type = EXPORTED_NAME_NORMAL;
+         if (res_me->u.local.var_ref) {
+           en->u.var_ref = res_me->u.local.var_ref;
+         } else {
+           LEPUSObject *p1 = LEPUS_VALUE_GET_OBJ(res_m->func_obj);
+-          p1 = LEPUS_VALUE_GET_OBJ(res_m->func_obj);
+           en->u.var_ref = p1->u.func.var_refs[res_me->u.local.var_idx];
+         }
++        if (en->u.var_ref == NULL) {
++          en->export_type = EXPORTED_NAME_NS;
++        } else {
++          en->export_type = EXPORTED_NAME_NORMAL;
++        }
+       }
+     }
+   }
+@@ -27191,9 +27566,11 @@ QJS_STATIC LEPUSValue js_build_module_ns(LEPUSContext *ctx, LEPUSModuleDef *m) {
+ 
+   for (i = 0; i < s->exported_names_count; i++) {
+     ExportedNameEntry *en = &s->exported_names[i];
++    
+     switch (en->export_type) {
+       case EXPORTED_NAME_NORMAL: {
+         JSVarRef *var_ref = en->u.var_ref;
++
+ #ifdef ENABLE_COMPATIBLE_MM
+         if (ctx->gc_enable)
+           pr = add_property_gc(
+@@ -27208,21 +27585,29 @@ QJS_STATIC LEPUSValue js_build_module_ns(LEPUSContext *ctx, LEPUSModuleDef *m) {
+         var_ref->header.ref_count++;
+         pr->u.var_ref = var_ref;
+       } break;
+-      case EXPORTED_NAME_NS:
+-        /* the exported namespace must be created on demand */
++      case EXPORTED_NAME_NS: {
+         int result;
++        void *opaque_data;
++        
++        if (en->u.module) {
++          opaque_data = en->u.module;
++        } else {
++          opaque_data = m;
++        }
++        
+ #ifdef ENABLE_COMPATIBLE_MM
+         if (ctx->gc_enable)
+           result = JS_DefineAutoInitProperty_GC(
+-              ctx, obj, en->export_name, js_module_ns_autoinit, en->u.module,
++              ctx, obj, en->export_name, js_module_ns_autoinit, opaque_data,
+               LEPUS_PROP_ENUMERABLE | LEPUS_PROP_WRITABLE);
+         else
+ #endif
+           result = JS_DefineAutoInitProperty(
+-              ctx, obj, en->export_name, js_module_ns_autoinit, en->u.module,
++              ctx, obj, en->export_name, js_module_ns_autoinit, opaque_data,
+               LEPUS_PROP_ENUMERABLE | LEPUS_PROP_WRITABLE);
+         if (result < 0) goto fail;
+         break;
++      }
+       default:
+         break;
+     }
+@@ -27538,6 +27923,272 @@ fail:
+   return -1;
+ }
+ 
++
++static LEPUSValue lepus_import_meta_resolve(LEPUSContext *ctx, LEPUSValueConst this_val,
++                                            int argc, LEPUSValueConst *argv, int magic) {
++    LEPUSRuntime *rt = ctx->rt;
++    const char *module_name_str = NULL, *current_module_str = NULL;
++    char *resolved_path;
++    LEPUSValue result;
++    JSAtom current_name_atom;
++    
++    if (argc < 1) {
++        return LEPUS_ThrowTypeError(ctx, "import.meta.resolve() requires at least one argument");
++    }
++
++    if (LEPUS_VALUE_GET_TAG(argv[0]) != LEPUS_TAG_STRING) {
++        return LEPUS_ThrowTypeError(ctx, "invalid specifier");
++    }
++    
++    // Get the module name to resolve
++    module_name_str = LEPUS_ToCString(ctx, argv[0]);
++    if (!module_name_str) {
++        return LEPUS_EXCEPTION;
++    }
++    
++    // Get the current module name from the stack
++    current_name_atom = LEPUS_GetScriptOrModuleName(ctx, 0);
++    if (current_name_atom != JS_ATOM_NULL) {
++        current_module_str = LEPUS_AtomToCString(ctx, current_name_atom);
++        printf("Current module name: %s\n", current_module_str);
++        LEPUS_FreeAtom(ctx, current_name_atom);
++    } else {
++      printf("Current module name: <anonymous>\n");
++    }
++    
++    // Call the resolve callback if available
++    if (rt->module_resolve_func) {
++        resolved_path = rt->module_resolve_func(ctx, module_name_str, current_module_str, rt->module_loader_opaque);
++        if (resolved_path) {
++            result = LEPUS_NewString(ctx, resolved_path);
++            lepus_free(ctx, resolved_path);
++        } else {
++            result = LEPUS_ThrowTypeError(ctx, "Cannot resolve module '%s'", module_name_str);
++        }
++    } else {
++        // Default behavior - just return the module name as-is with file:// prefix
++        char buf[PATH_MAX + 16];
++        if (!strchr(module_name_str, ':')) {
++            snprintf(buf, sizeof(buf), "file://%s", module_name_str);
++            result = LEPUS_NewString(ctx, buf);
++        } else {
++            result = LEPUS_NewString(ctx, module_name_str);
++        }
++    }
++    
++    // Clean up strings
++    LEPUS_FreeCString(ctx, module_name_str);
++    if (current_module_str) {
++        LEPUS_FreeCString(ctx, current_module_str);
++    }
++    
++    return result;
++}
++
++
++static void lepus_get_path_components(const char *path, char *dir, size_t dir_size, 
++                                      char *file, size_t file_size, 
++                                      char *full_path, size_t full_path_size) {
++    const char *last_slash = strrchr(path, '/');
++    const char *last_backslash = strrchr(path, '\\');
++    const char *separator = (last_slash > last_backslash) ? last_slash : last_backslash;
++    
++    if (separator && separator != path) {
++        // Extract directory
++        size_t dir_len = separator - path;
++        if (dir && dir_len < dir_size - 1) {
++            strncpy(dir, path, dir_len);
++            dir[dir_len] = '\0';
++        }
++        
++        // Extract filename
++        if (file && strlen(separator + 1) < file_size - 1) {
++            strcpy(file, separator + 1);
++        }
++    } else {
++        // No directory separator found or path starts with separator
++        if (separator == path) {
++            // Path starts with separator (e.g., "/file.js")
++            if (dir && dir_size > 1) {
++                strcpy(dir, "/");
++            }
++            if (file && strlen(path + 1) < file_size - 1) {
++                strcpy(file, path + 1);
++            }
++        } else {
++            // No separator found
++            if (dir && dir_size > 1) {
++                strcpy(dir, ".");
++            }
++            if (file && strlen(path) < file_size - 1) {
++                strcpy(file, path);
++            }
++        }
++    }
++    
++    // Full path (remove file:// prefix if present)
++    if (full_path) {
++        const char *clean_path = path;
++        if (strncmp(path, "file://", 7) == 0) {
++            clean_path = path + 7;
++        }
++        if (strlen(clean_path) < full_path_size - 1) {
++            strcpy(full_path, clean_path);
++        }
++    }
++}
++
++#define LEPUS_IMPORT_META_RESOLVE_MAGIC 0x1234
++
++int LEPUS_SetImportMeta(LEPUSContext *ctx, LEPUSValueConst func_val,
++                        LEPUS_BOOL use_realpath, LEPUS_BOOL is_main) {
++    LEPUSModuleDef *m;
++    char buf[PATH_MAX + 16];
++    char dir_buf[PATH_MAX];
++    char file_buf[PATH_MAX];
++    char path_buf[PATH_MAX];
++    LEPUSValue meta_obj, resolve_func;
++    JSAtom module_name_atom;
++    const char *module_name;
++    
++    assert(LEPUS_VALUE_GET_TAG(func_val) == LEPUS_TAG_MODULE);
++    m = static_cast<LEPUSModuleDef *>(LEPUS_VALUE_GET_PTR(func_val));
++    module_name_atom = LEPUS_GetModuleName(ctx, m);
++    module_name = LEPUS_AtomToCString(ctx, module_name_atom);
++    LEPUS_FreeAtom(ctx, module_name_atom);
++    if (!module_name)
++        return -1;
++    
++    // Always prefix with file:// since we're in WASM
++    if (!strchr(module_name, ':')) {
++        strcpy(buf, "file://");
++        // Since we're in WASM, we won't use realpath
++        strcat(buf, module_name);
++    } else {
++        strcpy(buf, module_name);
++    }
++    
++    // Extract path components for additional properties
++    lepus_get_path_components(module_name, dir_buf, sizeof(dir_buf), 
++                              file_buf, sizeof(file_buf), 
++                              path_buf, sizeof(path_buf));
++    
++    LEPUS_FreeCString(ctx, module_name);
++    
++    meta_obj = LEPUS_GetImportMeta(ctx, m);
++    if (LEPUS_IsException(meta_obj))
++        return -1;
++    
++    // Set standard properties
++    LEPUS_DefinePropertyValueStr(ctx, meta_obj, "url",
++                                 LEPUS_NewString(ctx, buf),
++                                 LEPUS_PROP_C_W_E);
++    LEPUS_DefinePropertyValueStr(ctx, meta_obj, "main",
++                                 LEPUS_NewBool(ctx, is_main),
++                                 LEPUS_PROP_C_W_E);
++    
++    // Set additional Bun-style properties
++    LEPUS_DefinePropertyValueStr(ctx, meta_obj, "dir",
++                                 LEPUS_NewString(ctx, dir_buf),
++                                 LEPUS_PROP_C_W_E);
++    LEPUS_DefinePropertyValueStr(ctx, meta_obj, "file",
++                                 LEPUS_NewString(ctx, file_buf),
++                                 LEPUS_PROP_C_W_E);
++    LEPUS_DefinePropertyValueStr(ctx, meta_obj, "path",
++                                 LEPUS_NewString(ctx, path_buf),
++                                 LEPUS_PROP_C_W_E);
++    
++    // Add the resolve function
++    resolve_func = LEPUS_NewCFunctionMagic(ctx, lepus_import_meta_resolve, "resolve", 1,
++                                           LEPUS_CFUNC_constructor_or_func_magic, 
++                                           LEPUS_IMPORT_META_RESOLVE_MAGIC);
++    LEPUS_DefinePropertyValueStr(ctx, meta_obj, "resolve",
++                                 resolve_func,
++                                 LEPUS_PROP_C_W_E);
++    
++    LEPUS_FreeValue(ctx, meta_obj);
++    return 0;
++}
++
++/* return JS_ATOM_NULL if the name cannot be found. Only works with
++   not striped bytecode functions. */
++JSAtom LEPUS_GetScriptOrModuleName(LEPUSContext *ctx, int n_stack_levels)
++{
++    LEPUSStackFrame *sf;
++    LEPUSFunctionBytecode *b;
++    LEPUSObject *p;
++    /* XXX: currently we just use the filename of the englobing
++       function from the debug info. May need to add a ScriptOrModule
++       info in LEPUSFunctionBytecode. */
++    sf = ctx->rt->current_stack_frame;
++    if (!sf)
++        return JS_ATOM_NULL;
++    while (n_stack_levels-- > 0) {
++        sf = sf->prev_frame;
++        if (!sf)
++            return JS_ATOM_NULL;
++    }
++    for(;;) {
++        if (LEPUS_VALUE_GET_TAG(sf->cur_func) != LEPUS_TAG_OBJECT)
++            return JS_ATOM_NULL;
++        p = LEPUS_VALUE_GET_OBJ(sf->cur_func);
++        if (!lepus_class_has_bytecode(p->class_id))
++            return JS_ATOM_NULL;
++        b = p->u.func.function_bytecode;
++        if (!b->is_direct_or_indirect_eval) {
++            if (!b->has_debug) {
++              return JS_ATOM_NULL;
++            }
++            return LEPUS_DupAtom(ctx, b->debug.filename);
++        } else {
++            sf = sf->prev_frame;
++            if (!sf)
++                return JS_ATOM_NULL;
++        }
++    }
++}
++
++JSAtom LEPUS_GetModuleName(LEPUSContext *ctx, LEPUSModuleDef *m)
++{
++    return LEPUS_DupAtom(ctx, m->module_name);
++}
++
++
++LEPUSValue LEPUS_GetImportMeta(LEPUSContext *ctx, LEPUSModuleDef *m)
++{
++    LEPUSValue obj;
++    /* allocate meta_obj only if requested to save memory */
++    obj = m->meta_obj;
++    if (LEPUS_IsUndefined(obj)) {
++        obj = LEPUS_NewObjectProto(ctx, LEPUS_NULL);
++        if (LEPUS_IsException(obj))
++            return LEPUS_EXCEPTION;
++        m->meta_obj = obj;
++    }
++    return LEPUS_DupValue(ctx, obj);
++}
++
++static LEPUSValue js_import_meta(LEPUSContext *ctx)
++{
++    LEPUSAtom filename;
++    LEPUSModuleDef *m;
++
++    filename = LEPUS_GetScriptOrModuleName(ctx, 0);
++    if (filename == JS_ATOM_NULL)
++        goto fail;
++
++    /* XXX: inefficient, need to add a module or script pointer in
++       JSFunctionBytecode */
++    m = js_find_loaded_module(ctx, filename);
++    LEPUS_FreeAtom(ctx, filename);
++    if (!m) {
++    fail:
++        LEPUS_ThrowTypeError(ctx, "import.meta not supported in this context");
++        return LEPUS_EXCEPTION;
++    }
++    return LEPUS_GetImportMeta(ctx, m);
++}
++
+ LEPUSValue js_dynamic_import(LEPUSContext *ctx, LEPUSValueConst specifier) {
+   HandleScope func_scope(ctx);
+   LEPUSStackFrame *sf;
+@@ -27567,7 +28218,7 @@ LEPUSValue js_dynamic_import(LEPUSContext *ctx, LEPUSValueConst specifier) {
+     LEPUS_ThrowTypeError(ctx, "no function filename for import()");
+     goto exception;
+   }
+-  basename = b->debug.filename;
++  basename = LEPUS_GetScriptOrModuleName(ctx, 0);
+ 
+   specifierString = LEPUS_ToString(ctx, specifier);
+   if (LEPUS_IsException(specifierString)) goto exception;
+@@ -27677,12 +28328,14 @@ LEPUSValue js_evaluate_module(LEPUSContext *ctx, LEPUSModuleDef *m) {
+ #endif
+     m->func_obj = LEPUS_UNDEFINED;
+   }
++
+   if (LEPUS_IsException(ret_val)) {
+     /* save the thrown exception value */
+     m->eval_has_exception = TRUE;
+     if (!ctx->gc_enable) LEPUS_DupValue(ctx, ctx->rt->current_exception);
+     m->eval_exception = ctx->rt->current_exception;
+   }
++
+   m->eval_mark = FALSE;
+   m->evaluated = TRUE;
+   return ret_val;
+@@ -28166,7 +28819,7 @@ QJS_STATIC void js_free_function_def(LEPUSContext *ctx, JSFunctionDef *fd) {
+   LEPUS_FreeAtom(ctx, fd->filename);
+   dbuf_free(&fd->pc2line);
+ 
+-  system_free(fd->source);
++  lepus_free(ctx, fd->source);
+ 
+   if (fd->parent) {
+     /* remove in parent list */
+@@ -29901,19 +30554,6 @@ QJS_STATIC void instantiate_hoisted_definitions(LEPUSContext *ctx,
+     }
+   }
+ 
+-  /* the module global variables must be initialized before
+-     evaluating the module so that the exported functions are
+-     visible if there are cyclic module references */
+-  if (s->module) {
+-    label_next = new_label_fd(s, -1);
+-
+-    /* if 'this' is true, initialize the global variables and return */
+-    dbuf_putc(bc, OP_push_this);
+-    dbuf_putc(bc, OP_if_false);
+-    dbuf_put_u32(bc, label_next);
+-    update_label(s, label_next, 1);
+-    s->jump_size++;
+-  }
+   /* add the global variables (only happens if s->is_global_var is
+      true) */
+   for (i = 0; i < s->hoisted_def_count; i++) {
+@@ -30005,13 +30645,6 @@ QJS_STATIC void instantiate_hoisted_definitions(LEPUSContext *ctx,
+   done_hoisted_def:
+     if (is_rc) LEPUS_FreeAtom(ctx, hf->var_name);
+   }
+-  if (s->module) {
+-    dbuf_putc(bc, OP_return_undef);
+-
+-    dbuf_putc(bc, OP_label);
+-    dbuf_put_u32(bc, label_next);
+-    s->label_slots[label_next].pos2 = bc->size;
+-  }
+ 
+   if (is_rc) lepus_free(ctx, s->hoisted_def);
+   s->hoisted_def = NULL;
+@@ -32167,7 +32800,6 @@ LEPUSValue js_create_function(LEPUSContext *ctx, JSFunctionDef *fd) {
+     b->debug.source = fd->source;
+     fd->source = nullptr;
+     b->debug.source_len = fd->source_len;
+-
+     // free excess memory
+     b->debug.caller_slots = static_cast<CallerStrSlot *>(lepus_realloc(
+         ctx, fd->caller_slots, sizeof(CallerStrSlot) * fd->caller_count,
+@@ -32201,6 +32833,8 @@ LEPUSValue js_create_function(LEPUSContext *ctx, JSFunctionDef *fd) {
+   b->super_call_allowed = fd->super_call_allowed;
+   b->super_allowed = fd->super_allowed;
+   b->arguments_allowed = fd->arguments_allowed;
++  b->is_direct_or_indirect_eval = (fd->eval_type == LEPUS_EVAL_TYPE_DIRECT ||
++                                     fd->eval_type == LEPUS_EVAL_TYPE_INDIRECT);
+ 
+ #if defined(DUMP_BYTECODE) && (DUMP_BYTECODE & 1)
+   if (!fd->strip_debug)
+@@ -32277,14 +32911,14 @@ QJS_STATIC void free_function_bytecode(LEPUSRuntime *rt,
+ 
+ #ifdef ENABLE_QUICKJS_DEBUGGER
+     if (b->func_level_state != DEBUGGER_TOP_LEVEL_FUNCTION) {
+-      system_free(b->debug.source);
++      lepus_free_rt(rt, b->debug.source);
+     }
+ 
+     if (b->debug.func_name) {
+       js_free_string(rt, b->debug.func_name);
+     }
+ #else
+-    system_free(b->debug.source);
++     lepus_free_rt(rt, b->debug.source);
+ #endif
+ 
+ #ifdef ENABLE_HAKO_PROFILER
+@@ -32506,7 +33140,9 @@ QJS_STATIC __exception int js_parse_function_decl2(
+            func_type == JS_PARSE_FUNC_EXPR &&
+            (func_kind & JS_FUNC_GENERATOR)) ||
+           (s->token.u.ident.atom == JS_ATOM_await &&
+-           func_type == JS_PARSE_FUNC_EXPR && (func_kind & JS_FUNC_ASYNC))) {
++           ((func_type == JS_PARSE_FUNC_EXPR &&
++             (func_kind & JS_FUNC_ASYNC)) ||
++            func_type == JS_PARSE_FUNC_CLASS_STATIC_INIT))) {
+         return js_parse_error_reserved_identifier(s);
+       }
+     }
+@@ -32514,9 +33150,10 @@ QJS_STATIC __exception int js_parse_function_decl2(
+         (((s->token.val == TOK_YIELD && !(fd->js_mode & JS_MODE_STRICT)) ||
+           (s->token.val == TOK_AWAIT && !s->is_module)) &&
+          func_type == JS_PARSE_FUNC_EXPR)) {
+-      func_name = LEPUS_DupAtom(ctx, s->token.u.ident.atom);
++      func_name = ctx->gc_enable ? s->token.u.ident.atom
++                                 : LEPUS_DupAtom(ctx, s->token.u.ident.atom);
+       if (next_token(s)) {
+-        LEPUS_FreeAtom(ctx, func_name);
++        if (!ctx->gc_enable) LEPUS_FreeAtom(ctx, func_name);
+         return -1;
+       }
+     } else {
+@@ -32526,7 +33163,7 @@ QJS_STATIC __exception int js_parse_function_decl2(
+       }
+     }
+   } else if (func_type != JS_PARSE_FUNC_ARROW) {
+-    func_name = LEPUS_DupAtom(ctx, func_name);
++    func_name = ctx->gc_enable ? func_name : LEPUS_DupAtom(ctx, func_name);
+   }
+ 
+   if (fd->is_eval && fd->eval_type == LEPUS_EVAL_TYPE_MODULE &&
+@@ -32538,13 +33175,12 @@ QJS_STATIC __exception int js_parse_function_decl2(
+     if (hf && hf->scope_level == fd->scope_level) {
+       js_parse_error(
+           s, "invalid redefinition of global identifier in module code");
+-      LEPUS_FreeAtom(ctx, func_name);
++      if (!ctx->gc_enable) LEPUS_FreeAtom(ctx, func_name);
+       return -1;
+     }
+   }
+ 
+   if (func_type == JS_PARSE_FUNC_VAR) {
+-    /* Create lexical name here so function closure contains it */
+     if (!(fd->js_mode & JS_MODE_STRICT) && func_kind == JS_FUNC_NORMAL &&
+         find_lexical_decl(ctx, fd, func_name, fd->scope_first, FALSE) < 0 &&
+         !((func_idx = find_var(ctx, fd, func_name)) >= 0 &&
+@@ -32552,6 +33188,8 @@ QJS_STATIC __exception int js_parse_function_decl2(
+         !(func_name == JS_ATOM_arguments && fd->has_arguments_binding)) {
+       create_func_var = TRUE;
+     }
++    /* Create the lexical name here so that the function closure
++       contains it */
+     if (fd->is_eval &&
+         (fd->eval_type == LEPUS_EVAL_TYPE_GLOBAL ||
+          fd->eval_type == LEPUS_EVAL_TYPE_MODULE) &&
+@@ -32563,7 +33201,7 @@ QJS_STATIC __exception int js_parse_function_decl2(
+       /* XXX: should check scope chain */
+       if (hf && hf->scope_level == fd->scope_level) {
+         js_parse_error(s, "invalid redefinition of global identifier");
+-        LEPUS_FreeAtom(ctx, func_name);
++        if (!ctx->gc_enable) LEPUS_FreeAtom(ctx, func_name);
+         return -1;
+       }
+     } else {
+@@ -32575,7 +33213,7 @@ QJS_STATIC __exception int js_parse_function_decl2(
+                      func_kind != JS_FUNC_NORMAL ? JS_VAR_DEF_NEW_FUNCTION_DECL
+                                                  : JS_VAR_DEF_FUNCTION_DECL);
+       if (lexical_func_idx < 0) {
+-        LEPUS_FreeAtom(ctx, func_name);
++        if (!ctx->gc_enable) LEPUS_FreeAtom(ctx, func_name);
+         return -1;
+       }
+     }
+@@ -32584,7 +33222,7 @@ QJS_STATIC __exception int js_parse_function_decl2(
+   fd = js_new_function_def(ctx, fd, FALSE, is_expr, s->filename,
+                            function_line_num);
+   if (!fd) {
+-    LEPUS_FreeAtom(ctx, func_name);
++    if (!ctx->gc_enable) LEPUS_FreeAtom(ctx, func_name);
+     return -1;
+   }
+ #ifdef ENABLE_QUICKJS_DEBUGGER
+@@ -32603,7 +33241,8 @@ QJS_STATIC __exception int js_parse_function_decl2(
+        func_type == JS_PARSE_FUNC_SETTER ||
+        func_type == JS_PARSE_FUNC_CLASS_CONSTRUCTOR ||
+        func_type == JS_PARSE_FUNC_DERIVED_CLASS_CONSTRUCTOR);
+-  fd->has_arguments_binding = (func_type != JS_PARSE_FUNC_ARROW);
++  fd->has_arguments_binding = (func_type != JS_PARSE_FUNC_ARROW &&
++                               func_type != JS_PARSE_FUNC_CLASS_STATIC_INIT);
+   fd->has_this_binding = fd->has_arguments_binding;
+   fd->is_derived_class_constructor =
+       (func_type == JS_PARSE_FUNC_DERIVED_CLASS_CONSTRUCTOR);
+@@ -32612,6 +33251,11 @@ QJS_STATIC __exception int js_parse_function_decl2(
+     fd->super_call_allowed = fd->parent->super_call_allowed;
+     fd->super_allowed = fd->parent->super_allowed;
+     fd->arguments_allowed = fd->parent->arguments_allowed;
++  } else if (func_type == JS_PARSE_FUNC_CLASS_STATIC_INIT) {
++    fd->new_target_allowed = TRUE; // although new.target === undefined
++    fd->super_call_allowed = FALSE;
++    fd->super_allowed = TRUE;
++    fd->arguments_allowed = FALSE;
+   } else {
+     fd->new_target_allowed = TRUE;
+     fd->super_call_allowed = fd->is_derived_class_constructor;
+@@ -32649,18 +33293,12 @@ QJS_STATIC __exception int js_parse_function_decl2(
+     name = s->token.u.ident.atom;
+     if (add_arg(ctx, fd, name) < 0) goto fail;
+     fd->defined_arg_count = 1;
+-  } else {
++  } else if (func_type != JS_PARSE_FUNC_CLASS_STATIC_INIT) {
+     if (s->token.val == '(') {
+       int skip_bits;
+-      BOOL has_ellipsis = FALSE;
+-      js_parse_skip_parens_token(s, &skip_bits, FALSE, &has_ellipsis);
+-      // rest parameters can not be used in setters
+-      // https://262.ecma-international.org/6.0/#sec-function-definitions
+-      if (has_ellipsis == TRUE && func_type == JS_PARSE_FUNC_SETTER) {
+-        LEPUS_ThrowSyntaxError(
+-            ctx, "Setter function argument must not be a rest parameter");
+-        goto fail;
+-      }
++      /* if there is an '=' inside the parameter list, we
++         consider there is a parameter expression inside */
++      js_parse_skip_parens_token(s, &skip_bits, FALSE);
+       if (skip_bits & SKIP_HAS_ASSIGNMENT) fd->has_parameter_expressions = TRUE;
+       if (next_token(s)) goto fail;
+     } else {
+@@ -32713,6 +33351,7 @@ QJS_STATIC __exception int js_parse_function_decl2(
+         if (fd->has_parameter_expressions) {
+           if (define_var(s, fd, name, JS_VAR_DEF_LET) < 0) goto fail;
+         }
++        /* XXX: could avoid allocating an argument if rest is true */
+         idx = add_arg(ctx, fd, name);
+         if (idx < 0) goto fail;
+         if (next_token(s)) goto fail;
+@@ -32730,25 +33369,14 @@ QJS_STATIC __exception int js_parse_function_decl2(
+           fd->has_simple_parameter_list = FALSE;
+           has_opt_arg = TRUE;
+         } else if (s->token.val == '=') {
++          int label;
++
+           fd->has_simple_parameter_list = FALSE;
+           has_opt_arg = TRUE;
+ 
+           if (next_token(s)) goto fail;
+ 
+-#if 0
+-                    /* XXX: not correct for eval code */
+-                    /* Check for a default value of `undefined`
+-                       to omit default argument processing */
+-                    if (s->token.val == TOK_IDENT &&
+-                        s->token.u.ident.atom == JS_ATOM_undefined &&
+-                        fd->parent == NULL &&
+-                        ((tok = peek_token(s, FALSE)) == ',' || tok == ')')) {
+-                        if (next_token(s))  /* ignore undefined token */
+-                            goto fail;
+-                    } else
+-#endif
+-
+-          int label = new_label(s);
++          label = new_label(s);
+           emit_op(s, OP_get_arg);
+           emit_u16(s, idx);
+           emit_op(s, OP_dup);
+@@ -32842,8 +33470,7 @@ QJS_STATIC __exception int js_parse_function_decl2(
+   push_scope(s); /* enter body scope: fd->scope_level = 1 */
+   fd->body_scope = fd->scope_level;
+ 
+-  if (s->token.val == TOK_ARROW && func_type == JS_PARSE_FUNC_ARROW)
+-  {
++  if (s->token.val == TOK_ARROW && func_type == JS_PARSE_FUNC_ARROW) {
+     if (next_token(s)) goto fail;
+ 
+     if (s->token.val != '{') {
+@@ -32856,20 +33483,21 @@ QJS_STATIC __exception int js_parse_function_decl2(
+       else
+         emit_op(s, OP_return);
+ 
+-      if (!fd->strip_source)
+-      {
++      if (!fd->strip_source) {
+         /* save the function source code */
+         /* the end of the function source code is after the last
+            token of the function source stored into s->last_ptr */
+         fd->source_len = s->last_ptr - ptr;
+-        fd->source = js_strmalloc((const char *)ptr, fd->source_len);
++        fd->source = lepus_strndup(ctx, (const char *)ptr, fd->source_len);
+         if (!fd->source) goto fail;
+       }
+       goto done;
+     }
+   }
+ 
+-  if (js_parse_expect(s, '{')) goto fail;
++  if (func_type != JS_PARSE_FUNC_CLASS_STATIC_INIT) {
++    if (js_parse_expect(s, '{')) goto fail;
++  }
+ 
+   if (js_parse_directives(s)) goto fail;
+ 
+@@ -32879,11 +33507,10 @@ QJS_STATIC __exception int js_parse_function_decl2(
+   while (s->token.val != '}') {
+     if (js_parse_source_element(s)) goto fail;
+   }
+-  if (!fd->strip_source)
+-  {
++  if (!fd->strip_source) {
+     /* save the function source code */
+     fd->source_len = s->buf_ptr - ptr;
+-    fd->source = js_strmalloc((const char *)ptr, fd->source_len);
++    fd->source = lepus_strndup(ctx, (const char *)ptr, fd->source_len);
+     if (!fd->source) goto fail;
+   }
+ 
+@@ -32899,6 +33526,12 @@ QJS_STATIC __exception int js_parse_function_decl2(
+ done:
+   s->cur_func = fd->parent;
+ 
++  /* Reparse identifiers after the function is terminated so that
++     the token is parsed in the englobing function. It could be done
++     by just using next_token() here for normal functions, but it is
++     necessary for arrow functions with an expression body. */
++     reparse_ident_token(s);
++
+   /* create the function object */
+   {
+     int idx;
+@@ -32931,6 +33564,9 @@ done:
+              function */
+           hf = add_hoisted_def(ctx, s->cur_func, -1, func_name, -1, FALSE);
+           if (!hf) goto fail;
++          /* it is considered as defined at the top level
++             (needed for annex B.3.3.4 and B.3.3.5
++             checks) */
+           hf->scope_level = 0;
+           hf->force_init = ((s->cur_func->js_mode & JS_MODE_STRICT) != 0);
+           /* store directly into global var, bypass lexical scope */
+@@ -33003,7 +33639,6 @@ fail:
+   if (pfd) *pfd = NULL;
+   return -1;
+ }
+-
+ QJS_STATIC __exception int js_parse_function_decl(JSParseState *s,
+                                                   JSParseFunctionEnum func_type,
+                                                   JSFunctionKindEnum func_kind,
+@@ -33116,6 +33751,7 @@ LEPUSValue LEPUS_EvalFunction(LEPUSContext *ctx, LEPUSValue fun_obj,
+ }
+ 
+ #ifndef NO_QUICKJS_COMPILER
++
+ void skip_shebang(JSParseState *s) {
+   const uint8_t *p = s->buf_ptr;
+   int c;
+@@ -33140,6 +33776,30 @@ void skip_shebang(JSParseState *s) {
+   }
+ }
+ 
++LEPUS_BOOL LEPUS_DetectModule(const char *input, size_t input_len)
++{
++    JSParseState s;
++    int tok;
++    
++    // Minimal initialization - only what's needed for peek_token and skip_shebang
++    memset(&s, 0, sizeof(s));
++    s.buf_ptr = (const uint8_t *)input;
++    s.buf_end = s.buf_ptr + input_len;
++    
++    // Skip shebang if present
++    skip_shebang(&s);
++    
++    switch(peek_token(&s, FALSE)) {
++    case TOK_IMPORT:
++        tok = peek_token(&s, FALSE);
++        return (tok != '.' && tok != '(');
++    case TOK_EXPORT:
++        return TRUE;
++    default:
++        return FALSE;
++    }
++}
++
+ /* 'input' must be zero terminated i.e. input[input_len] = '\0'. */
+ QJS_STATIC LEPUSValue __JS_EvalInternal(LEPUSContext *ctx,
+                                         LEPUSValueConst this_obj,
+@@ -33304,46 +33964,6 @@ LEPUSValue JS_EvalObject(LEPUSContext *ctx, LEPUSValueConst this_obj,
+ #endif
+ }
+ 
+-LEPUS_BOOL LEPUS_DetectModule(const char *input, size_t input_len)
+-{
+-    LEPUSRuntime *rt;
+-    LEPUSContext *ctx;
+-    LEPUSValue val;
+-    bool is_module;
+-    is_module = true;
+-    
+-    rt = LEPUS_NewRuntime();
+-    if (!rt)
+-        return false;
+-    
+-    ctx = LEPUS_NewContextRaw(rt);
+-    if (!ctx) {
+-        LEPUS_FreeRuntime(rt);
+-        return false;
+-    }
+-    
+-    LEPUS_AddIntrinsicRegExpCompiler(ctx); // otherwise regexp literals don't parse
+-    
+-    // Updated call to match the new __JS_EvalInternal signature
+-    val = __JS_EvalInternal(ctx, LEPUS_UNDEFINED, input, input_len, "<unnamed>", 
+-                           LEPUS_EVAL_TYPE_MODULE|LEPUS_EVAL_FLAG_COMPILE_ONLY, 
+-                           -1, false, NULL);
+-    
+-    if (LEPUS_IsException(val)) {
+-        const char *msg = LEPUS_ToCString(ctx, rt->current_exception);
+-        // gruesome hack to recognize exceptions from import statements;
+-        // necessary because we don't pass in a module loader
+-        is_module = !!strstr(msg, "ReferenceError: could not load module");
+-        LEPUS_FreeCString(ctx, msg);
+-    }
+-    
+-    LEPUS_FreeValue(ctx, val);
+-    LEPUS_FreeContext(ctx);
+-    LEPUS_FreeRuntime(rt);
+-    
+-    return is_module;
+-}
+-
+ 
+ LEPUSValue LEPUS_Eval(LEPUSContext *ctx, const char *input, size_t input_len,
+                       const char *filename, int eval_flags) {
+@@ -33362,31 +33982,55 @@ LEPUSValue LEPUS_Eval(LEPUSContext *ctx, const char *input, size_t input_len,
+ #endif
+ }
+ 
++void LEPUS_FreeModuleDef(LEPUSContext *ctx, LEPUSModuleDef *m) 
++{
++  js_free_module_def(ctx, m);
++}
++
+ LEPUSValue LEPUS_EvalBinary(LEPUSContext *ctx, const uint8_t *buf,
+                             size_t buf_len, int flags) {
+-  CallGCFunc(JS_EvalBinary_GC, ctx, buf, buf_len, flags);
+-  LEPUSValue obj;
+-  obj = LEPUS_ReadObject(ctx, buf, buf_len, LEPUS_READ_OBJ_BYTECODE);
+-  if (LEPUS_IsException(obj)) return obj;
+-  if (flags & LEPUS_EVAL_BINARY_LOAD_ONLY) {
+-    return obj;
+-  } else {
+-    /* if a module, we load the dependencies here */
+-
+-#ifndef NO_QUICKJS_COMPILER
++    CallGCFunc(JS_EvalBinary_GC, ctx, buf, buf_len, flags);
++    
++    LEPUSValue obj = LEPUS_UNDEFINED;
++    LEPUSValue result = LEPUS_UNDEFINED;
++    
++    obj = LEPUS_ReadObject(ctx, buf, buf_len, LEPUS_READ_OBJ_BYTECODE);
++    if (LEPUS_IsException(obj)) {
++        return obj;
++    }
++    
++    if (flags & LEPUS_EVAL_BINARY_LOAD_ONLY) {
++        return obj;
++    }
++    
+     if (LEPUS_VALUE_IS_MODULE(obj)) {
+-      LEPUSModuleDef *m =
+-          static_cast<LEPUSModuleDef *>(LEPUS_VALUE_GET_PTR(obj));
+-      if (js_resolve_module(ctx, m) < 0) {
+-        LEPUS_FreeValue(ctx, obj);
+-        js_free_modules(ctx, JS_FREE_MODULE_NOT_RESOLVED);
+-        return LEPUS_EXCEPTION;
+-      }
++        LEPUSModuleDef *module = static_cast<LEPUSModuleDef *>(LEPUS_VALUE_GET_PTR(obj));
++        
++        if (js_resolve_module(ctx, module) < 0) {
++            LEPUS_FreeValue(ctx, obj);
++            js_free_modules(ctx, JS_FREE_MODULE_NOT_RESOLVED);
++            return LEPUS_EXCEPTION;
++        }
++        
++        if (LEPUS_SetImportMeta(ctx, obj, TRUE, TRUE) < 0) {
++            LEPUS_FreeValue(ctx, obj);
++            js_free_modules(ctx, JS_FREE_MODULE_NOT_EVALUATED);
++            return LEPUS_EXCEPTION;
++        }
++        
++        result = LEPUS_EvalFunction(ctx, obj, ctx->global_obj);
++        
++        if (LEPUS_IsException(result)) {
++            return result;
++        }
++        
++        LEPUSValue module_namespace = LEPUS_GetModuleNamespace(ctx, module);
++        LEPUS_FreeValue(ctx, result);
++        return module_namespace;
+     }
+-#endif
+-
+-    return LEPUS_EvalFunction(ctx, obj, ctx->global_obj);
+-  }
++    
++    result = LEPUS_EvalFunction(ctx, obj, ctx->global_obj);
++    return result;
+ }
+ 
+ /*******************************************************************/
+@@ -33863,6 +34507,7 @@ static int JS_WriteFunction(BCWriterState *s, LEPUSValueConst obj) {
+   bc_set_flags(&flags, &idx, b->super_allowed, 1);
+   bc_set_flags(&flags, &idx, b->arguments_allowed, 1);
+   bc_set_flags(&flags, &idx, b->has_debug, 1);
++  bc_set_flags(&flags, &idx, b->is_direct_or_indirect_eval, 1);
+   assert(idx <= 16);
+   bc_put_u16(s, flags);
+   bc_put_u8(s, b->js_mode);
+@@ -34730,6 +35375,7 @@ QJS_STATIC LEPUSValue JS_ReadFunction(BCReaderState *s) {
+       }
+       if (!ctx->gc_enable) LEPUS_FreeCString(ctx, str);
+     }
++    
+ 
+     if (bc_get_leb128_int(s, &b->debug.pc2line_len)) goto fail;
+     if (b->debug.pc2line_len) {
+@@ -57452,8 +58098,7 @@ int64_t GetContextDebugInfoNewFlag(LEPUSContext *ctx) {
+ }
+ #endif
+ 
+-#ifdef ENABLE_QUICKJS_DEBUGGER
+-
++#if defined(ENABLE_QUICKJS_DEBUGGER) || defined(DUMP_BYTECODE) 
+ void ComputeLineCol(int64_t line_col_num, int32_t *line, int64_t *column) {
+   // for line and column compatibility
+   // if the highest bit is 1, use 24 bits for line number, 38 bits for column
+@@ -57477,6 +58122,9 @@ void ComputeLineCol(int64_t line_col_num, int32_t *line, int64_t *column) {
+     *column = 0;
+   }
+ }
++#endif
++
++#ifdef ENABLE_QUICKJS_DEBUGGER
+ 
+ LEPUSValue GetFunctionCallerString(LEPUSContext *ctx,
+                                    const LEPUSFunctionBytecode *b) {
+-- 
+2.45.2
+

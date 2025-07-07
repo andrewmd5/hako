@@ -1,26 +1,25 @@
-import type {
-  ContextOptions,
-  ExecutePendingJobsResult,
-  JSVoid,
-  ProfilerEventHandler,
-  StripOptions,
-} from "@hako/etc/types";
-import type { Container } from "@hako/runtime/container";
-import { VMContext } from "@hako/vm/context";
 import {
-  Intrinsic,
+  type ContextOptions,
+  type ExecutePendingJobsResult,
+  type InterruptHandler,
+  intrinsicsToFlags,
+  JS_STRIP_DEBUG,
+  JS_STRIP_SOURCE,
   type JSRuntimePointer,
+  type JSVoid,
   type MemoryUsage,
   type ModuleLoaderFunction,
   type ModuleNormalizerFunction,
-  type InterruptHandler,
-  intrinsicsToFlags,
+  type ModuleResolverFunction,
+  type ProfilerEventHandler,
+  type StripOptions,
   ValueLifecycle,
-  JS_STRIP_DEBUG,
-  JS_STRIP_SOURCE,
-} from "@hako/etc/types";
-import { VMValue } from "@hako/vm/value";
-import { DisposableResult, Scope } from "@hako/mem/lifetime";
+} from "../etc/types";
+import { DisposableResult, Scope } from "../mem/lifetime";
+import { CModuleBuilder, type CModuleInitializer } from "../vm/cmodule";
+import { VMContext } from "../vm/context";
+import { VMValue } from "../vm/value";
+import type { Container } from "./container";
 
 /**
  * The HakoRuntime class represents a JavaScript execution environment.
@@ -91,6 +90,21 @@ export class HakoRuntime implements Disposable {
   }
 
   /**
+   * Creates a C module with inline handler registration
+   */
+  createCModule(
+    name: string,
+    handler: (initializer: CModuleInitializer) => number | undefined,
+    ctx: VMContext | undefined = undefined
+  ): CModuleBuilder {
+    return new CModuleBuilder(
+      ctx ? ctx : this.getSystemContext(),
+      name,
+      handler
+    );
+  }
+
+  /**
    * Creates a new JavaScript execution context within this runtime.
    *
    * Contexts isolate JavaScript execution environments, each with their own global object
@@ -117,7 +131,7 @@ export class HakoRuntime implements Disposable {
     // Calculate intrinsics flags based on options or use all intrinsics by default
     const intrinsics = options.intrinsics
       ? intrinsicsToFlags(options.intrinsics)
-      : Intrinsic.All;
+      : 0;
 
     // Create the native context
     const ctxPtr = this.container.exports.HAKO_NewContext(
@@ -158,14 +172,14 @@ export class HakoRuntime implements Disposable {
    * // Strip all debug info (including source)
    * runtime.setStripInfo({ stripDebug: true });
    */
-  setStripInfo(options: StripOptions): void {
+  setStripInfo(options?: StripOptions): void {
     let flags = 0;
 
-    if (options.stripSource) {
+    if (options?.stripSource) {
       flags |= JS_STRIP_SOURCE;
     }
 
-    if (options.stripDebug) {
+    if (options?.stripDebug) {
       flags |= JS_STRIP_DEBUG;
     }
 
@@ -280,7 +294,7 @@ export class HakoRuntime implements Disposable {
       this.rtPtr
     );
     const str = this.container.memory.readString(strPtr);
-    this.container.memory.freeMemory(strPtr);
+    this.container.memory.freeRuntimeMemory(this.pointer, strPtr);
     return str;
   }
 
@@ -292,14 +306,19 @@ export class HakoRuntime implements Disposable {
    *
    * @param loader - Function to load module source code given a module specifier
    * @param normalizer - Optional function to normalize module names (resolve relative paths, etc.)
+   * @param resolver - Optional function to handle import.meta.resolve calls
    */
   enableModuleLoader(
     loader: ModuleLoaderFunction,
-    normalizer?: ModuleNormalizerFunction
+    normalizer?: ModuleNormalizerFunction,
+    resolver?: ModuleResolverFunction
   ): void {
     this.container.callbacks.setModuleLoader(loader);
     if (normalizer) {
       this.container.callbacks.setModuleNormalizer(normalizer);
+    }
+    if (resolver) {
+      this.container.callbacks.setModuleResolver(resolver);
     }
     this.container.exports.HAKO_RuntimeEnableModuleLoader(
       this.rtPtr,
@@ -466,14 +485,17 @@ export class HakoRuntime implements Disposable {
    */
   executePendingJobs(maxJobsToExecute = -1): ExecutePendingJobsResult {
     // Allocate memory for the context output parameter
-    const ctxPtrOut = this.container.memory.allocatePointerArray(1);
+    const ctxPtrOut = this.container.memory.allocateRuntimePointerArray(
+      this.pointer,
+      1
+    );
     const resultPtr = this.container.exports.HAKO_ExecutePendingJob(
       this.rtPtr,
       maxJobsToExecute,
       ctxPtrOut
     );
     const ctxPtr = this.container.memory.readPointerFromArray(ctxPtrOut, 0);
-    this.container.memory.freeMemory(ctxPtrOut);
+    this.container.memory.freeRuntimeMemory(this.pointer, ctxPtrOut);
 
     if (ctxPtr === 0) {
       // No context was created, no jobs were executed
@@ -548,6 +570,26 @@ export class HakoRuntime implements Disposable {
       this.container.exports.HAKO_FreeRuntime(this.rtPtr);
       this.isReleased = true;
     }
+  }
+
+  /**
+   * Allocates shared runtime memory.
+   * @param size - The size in bytes to allocate
+   * @returns The pointer to the allocated memory
+   */
+  allocateMemory(size: number): number {
+    if (this.isReleased) {
+      throw new Error("Cannot allocate memory on a released runtime");
+    }
+    return this.container.memory.allocateRuntimeMemory(this.pointer, size);
+  }
+
+  /**
+   * Frees previously allocated shared runtime memory.
+   * @param ptr - The pointer to the memory to free
+   */
+  freeMemory(ptr: number): void {
+    this.container.memory.freeRuntimeMemory(this.pointer, ptr);
   }
 
   /**

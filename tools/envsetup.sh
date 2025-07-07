@@ -13,7 +13,7 @@ BINARYEN_VERSION="version_123"
 WASI_SDK_VERSION="25"
 WASI_SDK_VERSION_FULL="${WASI_SDK_VERSION}.0"
 WABT_VERSION="1.0.37"
-BIOME_VERSION="1.9.4"
+BIOME_VERSION="2.0.6"
 
 # Create tool installation directory if it doesn't exist
 mkdir -p "${TOOL_INSTALL_DIR}"

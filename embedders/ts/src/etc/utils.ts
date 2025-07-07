@@ -1,6 +1,6 @@
-import type { MemoryManager } from "@hako/mem/memory";
-import type { HakoExports } from "@hako/etc/ffi";
-import type { HakoBuildInfo } from "@hako/etc/types";
+import type { HakoExports } from "../etc/ffi";
+import type { HakoBuildInfo } from "../etc/types";
+import type { MemoryManager } from "../mem/memory";
 
 /**
  * Provides utility functions for the PrimJS wrapper.
@@ -106,7 +106,7 @@ export class Utils {
    */
   getLength(ctx: number, ptr: number): number {
     // Allocate memory for the output parameter
-    const lenPtrPtr = this.memory.allocateMemory(4);
+    const lenPtrPtr = this.memory.allocateMemory(ctx, 4);
     try {
       // Call the native function to get the length
       const result = this.exports.HAKO_GetLength(ctx, lenPtrPtr, ptr);
@@ -119,7 +119,7 @@ export class Utils {
       return view.getUint32(lenPtrPtr, true); // Little endian
     } finally {
       // Ensure we free the allocated memory
-      this.memory.freeMemory(lenPtrPtr);
+      this.memory.freeMemory(ctx, lenPtrPtr);
     }
   }
 
