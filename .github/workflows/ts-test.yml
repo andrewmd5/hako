@@ -1,0 +1,60 @@
+name: Test TypeScript Embedder
+on:
+  push:
+    branches:
+      - main
+      - vnext
+  pull_request:
+    branches:
+      - main
+      - vnext
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14.0'
+          registry-url: 'https://registry.npmjs.org'
+      - name: setup bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.2.9'
+      - name: Setup cmake
+        uses: jwlawson/actions-setup-cmake@802fa1a2c4e212495c05bf94dba2704a92a472be
+        with:
+          cmake-version: '4.0.x'
+      - name: envsetup
+        run: chmod +x tools/envsetup.sh && tools/envsetup.sh
+      - name: patch
+        run: chmod +x tools/patch.sh && tools/patch.sh
+      - name: install dependencies (TS)
+        working-directory: embedders/ts
+        run: |
+          # npm has a bug, nothing we can do.
+          rm -rf package-lock.json
+          npm i
+      - name: generate builds (TS)
+        working-directory: embedders/ts
+        run: bun generate:builds
+      - name: generate version (TS)
+        working-directory: embedders/ts
+        run: bun generate:version
+      - name: lint (TS)
+        working-directory: embedders/ts
+        run: |
+          source ${{ github.workspace }}/tools/third-party/env.sh
+          bun lint
+      - name: test (TS)
+        working-directory: embedders/ts
+        run: bun test
+      - name: build (TS)
+        working-directory: embedders/ts
+        run: bun run build
