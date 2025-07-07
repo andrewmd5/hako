@@ -6,13 +6,14 @@
  * freeing memory in the WebAssembly heap, with special handling for JavaScript values,
  * strings, and arrays of pointers.
  */
+
+import type { HakoExports } from "../etc/ffi";
 import type {
   CString,
   JSContextPointer,
   JSRuntimePointer,
   JSValuePointer,
-} from "@hako/etc/types";
-import type { HakoExports } from "@hako/etc/ffi";
+} from "../etc/types";
 
 /**
  * Handles memory operations for the PrimJS WebAssembly module.
@@ -23,14 +24,6 @@ import type { HakoExports } from "@hako/etc/ffi";
  * with strings, pointers, arrays, and JavaScript values in WebAssembly memory.
  */
 export class MemoryManager {
-  private requiresBufferCopy: boolean;
-  constructor() {
-    // Chrome, Firefox, and Chromium forks don't support using TextDecoder on SharedArrayBuffer.
-    // Safari on the other hand does. Concidentally, the aforementioned browsers are the only ones that have the 'doNotTrack' property on 'navigator'.
-    // so if we detect that property, we can assume that we are in a browser that doesn't support TextDecoder on SharedArrayBuffer.
-    this.requiresBufferCopy =
-      navigator !== undefined && "doNotTrack" in navigator;
-  }
   /**
    * Reference to the WebAssembly exports object, which contains
    * memory management functions and the memory buffer.

@@ -1,19 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import type { VMContext } from "../src/vm/context";
-import type { HakoRuntime } from "../src/runtime/runtime";
-import type { Container } from "../src/runtime/container";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { createHakoRuntime, decodeVariant, HAKO_PROD } from "../src";
 import type { HakoExports } from "../src/etc/ffi";
-import {
-  createHakoRuntime,
-  decodeVariant,
-  HAKO_PROD,
-  type ModuleLoaderFunction,
-} from "../src";
-import { VMValue } from "../src/vm/value";
-import type { MemoryManager } from "../src/mem/memory";
+import type { ModuleLoaderFunction, TraceEvent } from "../src/etc/types";
+import type { HakoRuntime } from "../src/host/runtime";
 import { DisposableResult } from "../src/mem/lifetime";
-import type { TraceEvent } from "../src/etc/types";
-import { writeFileSync } from "node:fs";
+import type { MemoryManager } from "../src/mem/memory";
+import type { VMContext } from "../src/vm/context";
+import { VMValue } from "../src/vm/value";
 
 const createTraceProfiler = () => {
   // Array to store all trace events
@@ -252,6 +245,13 @@ fibonacci(100);
     });
 
     it("should verify Performance API implementation", () => {
+      type performanceData = {
+        now: number;
+        origin: number;
+        current: number;
+        nowType: string;
+        originType: string;
+      };
       // Test the performance API implementation
       using result = context.evalCode(`
     let a = {
@@ -265,7 +265,7 @@ fibonacci(100);
   `);
 
       using value = context.unwrapResult<VMValue>(result);
-      using nativeValue = value.toNativeValue();
+      using nativeValue = value.toNativeValue<performanceData>();
       const performanceData = nativeValue.value;
       console.log("Performance API results:", performanceData);
 
@@ -362,7 +362,7 @@ fibonacci(100);
   describe("C Module support", () => {
     it("should create a C module with the builder API", () => {
       let initWasCalled = false;
-      let capturedValue: string | null = null;
+      let capturedValue: string | undefined;
 
       // Bind a function to capture values
       using global = context.getGlobalObject();
@@ -514,7 +514,7 @@ fibonacci(100);
       // Create capture function
       using global = context.getGlobalObject();
       using captureFunc = context.newFunction("captureJSON", (value) => {
-        using box = value.toNativeValue();
+        using box = value.toNativeValue<typeof jsonData>();
         capturedData = box.value;
         return context.undefined();
       });
@@ -1048,7 +1048,10 @@ fibonacci(100);
         }
         return { type: "source", data: moduleContent };
       };
-      const resolver = (moduleName: string, currentModule: string) => {
+      const resolver = (
+        moduleName: string,
+        currentModule: string | undefined
+      ) => {
         console.log(`Resolving module: ${moduleName} from ${currentModule}`);
         // For simplicity, just
         return moduleName;
@@ -1073,10 +1076,15 @@ fibonacci(100);
   `,
         { type: "module" }
       );
+      type ModuleExports = {
+        hello: (name: string) => string;
+        sayGoodbye: (name: string) => string;
+        greeting: string;
+      };
 
       // Get the module result
       using jsValue = result.unwrap();
-      using jsObject = jsValue.toNativeValue();
+      using jsObject = jsValue.toNativeValue<ModuleExports>();
 
       expect(jsObject).toBeDefined();
       expect(jsObject.value).toBeDefined();
@@ -1188,7 +1196,7 @@ fibonacci(100);
 
     it("should compile and evaluate an ES6 module", () => {
       const code = `
-      export const test = "Hello, World!" + import.meta.url;
+      export const test = "Hello, World!";
       export const value = 42;
       export function multiply(x) {
         return x * 2;

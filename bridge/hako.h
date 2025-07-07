@@ -817,7 +817,7 @@ LEPUS_BOOL HAKO_IsGlobalSymbol(LEPUSContext* ctx, LEPUSValueConst* value);
  * @tsparam value JSValueConstPointer
  * @tsreturn HAKOTypeOf
  */
-HAKOTypeOf HAKO_Typeof(LEPUSContext* ctx, LEPUSValueConst* value);
+HAKOTypeOf HAKO_TypeOf(LEPUSContext* ctx, LEPUSValueConst* value);
 
 /**
  * @brief Checks if a value is an array
@@ -1501,6 +1501,15 @@ void HAKO_SetModulePrivateValue(LEPUSContext* ctx, LEPUSModuleDef* module,
  */
 LEPUSValue* HAKO_GetModulePrivateValue(LEPUSContext* ctx,
                                        LEPUSModuleDef* module);
+/**
+ * @brief Checks if a value is null
+ * @category Value Operations
+ * @param value Value to check
+ * @return LEPUS_BOOL - True if value is null
+ * @tsparam value JSValueConstPointer
+ * @tsreturn LEPUS_BOOL     
+ */
+LEPUS_BOOL HAKO_IsNull(LEPUSValueConst* value);
 
 #ifdef HAKO_DEBUG_MODE
 #define HAKO_LOG(msg) hako_log(msg)

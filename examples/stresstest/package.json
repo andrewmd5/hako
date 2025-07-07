@@ -10,6 +10,7 @@
     "typescript": "^5"
   },
   "dependencies": {
-    "hakojs": "file:../../embedders/ts"
+    "hakojs": "file:../../embedders/ts",
+    "nanoid": "^4.0.0"
   }
 }

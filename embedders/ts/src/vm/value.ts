@@ -1,20 +1,18 @@
-import type { HakoExports } from "@hako/etc/ffi";
-import { HakoError, PrimJSUseAfterFree } from "@hako/etc/errors";
+import { HakoError, PrimJSUseAfterFree } from "../etc/errors";
+import type { HakoExports } from "../etc/ffi";
 import {
-  type JSValuePointer,
-  ValueLifecycle,
-  type PropertyDescriptor,
-  PropertyEnumFlags,
   EqualOp,
-  type PromiseState,
   IsEqualOp,
-  LEPUS_BOOLToBoolean,
   type JSType,
-  type OwnedHeapChar,
+  type JSValuePointer,
+  LEPUS_BOOLToBoolean,
+  type PromiseState,
+  PropertyEnumFlags,
   type TypedArrayType,
-} from "@hako/etc/types";
-import type { VMContext } from "@hako/vm/context";
-import { type NativeBox, Scope } from "@hako/mem/lifetime";
+  ValueLifecycle,
+} from "../etc/types";
+import { type NativeBox, Scope } from "../mem/lifetime";
+import type { VMContext } from "./context";
 
 /**
  * Represents a JavaScript value within the PrimJS virtual machine.
@@ -170,18 +168,29 @@ export class VMValue implements Disposable {
    * @returns The JavaScript type as a string
    */
   private getValueType(): JSType {
-    const typePtr: OwnedHeapChar = this.context.container.exports.HAKO_Typeof(
+    const type: number = this.context.container.exports.HAKO_TypeOf(
       this.context.pointer,
       this.handle
     );
-    try {
-      if (typePtr === 0) {
-        return "unknown";
-      }
-      const typeStr = this.context.container.memory.readString(typePtr);
-      return typeStr as JSType;
-    } finally {
-      this.context.container.memory.freeMemory(this.context.pointer, typePtr);
+    switch (type) {
+      case 0:
+        return "undefined";
+      case 1:
+        return "object";
+      case 2:
+        return "string";
+      case 3:
+        return "symbol";
+      case 4:
+        return "boolean";
+      case 5:
+        return "number";
+      case 6:
+        return "bigint";
+      case 7:
+        return "function";
+      default:
+        return "undefined";
     }
   }
 
@@ -193,6 +202,8 @@ export class VMValue implements Disposable {
    */
   get type(): JSType {
     this.assertAlive();
+    console.debug(`Getting type for value with handle ${this.handle}`);
+    if (this.isNull()) return "object"; // Special case for null
     return this.getValueType();
   }
 
@@ -247,13 +258,8 @@ export class VMValue implements Disposable {
    */
   isNull(): boolean {
     this.assertAlive();
-    // we need to free the null pointer after checking equality
-    // because the null pointer is a temporary value created by the engine
-    return this.context.container.utils.isEqual(
-      this.context.pointer,
-      this.handle,
-      this.context.container.exports.HAKO_GetNull(),
-      EqualOp.StrictEquals
+    return LEPUS_BOOLToBoolean(
+      this.context.container.exports.HAKO_IsNull(this.handle)
     );
   }
 
@@ -762,7 +768,7 @@ export class VMValue implements Disposable {
       );
       try {
         yield new VMValue(this.context, valuePtr, ValueLifecycle.Owned);
-      } catch (e) {
+      } catch (_e) {
         // Clean up any remaining value pointers if iteration is aborted
         for (let i = currentIndex; i < outLen; i++) {
           const unyieldedValuePtr =
@@ -948,8 +954,6 @@ export class VMValue implements Disposable {
       switch (type) {
         case "undefined":
           return createResult(undefined);
-        case "null":
-          return createResult(null);
         case "boolean":
           return createResult(this.asBoolean());
         case "number":
@@ -961,11 +965,15 @@ export class VMValue implements Disposable {
         case "bigint":
           return createResult(BigInt(this.asString()));
         case "object": {
+          if (this.isNull()) {
+            return createResult(null);
+          }
           if (this.isArray()) {
             const length = this.getLength();
             const result = [];
             for (let i = 0; i < length; i++) {
               const item = this.getProperty(i).toNativeValue();
+
               disposables.push(item);
               result.push(item.value);
             }

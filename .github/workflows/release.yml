@@ -51,26 +51,26 @@ jobs:
 
       - name: generate builds (TS)
         working-directory: embedders/ts
-        run: npm run generate:builds
+        run: bun generate:builds
 
       - name: generate version (TS)
         working-directory: embedders/ts
-        run: npm run generate:version
+        run: bun generate:version
 
       - name: lint (TS)
         working-directory: embedders/ts
         run: |
           source ${{ github.workspace }}/tools/third-party/env.sh
-          npm run lint
+          bun lint
 
       - name: test (TS)
         working-directory: embedders/ts
-        run: npm run test
+        run: bun test
 
       - name: build (TS)
         working-directory: embedders/ts
-        run: npm run build
-      
+        run: bun run build
+
       # we will publish in a bit, let's build and publish REPL
       - name: install dependencies (REPL)
         working-directory: examples/repl

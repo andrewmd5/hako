@@ -1,6 +1,6 @@
-import type { MemoryManager } from "@hako/mem/memory";
-import type { HakoExports } from "@hako/etc/ffi";
-import type { HakoBuildInfo } from "@hako/etc/types";
+import type { HakoExports } from "../etc/ffi";
+import type { HakoBuildInfo } from "../etc/types";
+import type { MemoryManager } from "../mem/memory";
 
 /**
  * Provides utility functions for the PrimJS wrapper.

@@ -1,12 +1,12 @@
-import type { Container } from "@hako/runtime/container";
-import type { VMContext } from "@hako/vm/context";
+import { HakoError } from "../etc/errors";
 import {
   detectCircularReferences,
-  ValueLifecycle,
   type HostCallbackFunction,
-} from "@hako/etc/types";
-import { VMValue } from "@hako/vm/value";
-import { HakoError } from "@hako/etc/errors";
+  ValueLifecycle,
+} from "../etc/types";
+import type { Container } from "../host/container";
+import type { VMContext } from "./context";
+import { VMValue } from "./value";
 
 /**
  * Factory class for creating JavaScript values in the PrimJS virtual machine.

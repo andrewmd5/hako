@@ -1,27 +1,25 @@
-import type {
-  ContextOptions,
-  ExecutePendingJobsResult,
-  JSVoid,
-  ModuleResolverFunction,
-  ProfilerEventHandler,
-  StripOptions,
-} from "@hako/etc/types";
-import type { Container } from "@hako/runtime/container";
-import { VMContext } from "@hako/vm/context";
 import {
+  type ContextOptions,
+  type ExecutePendingJobsResult,
+  type InterruptHandler,
+  intrinsicsToFlags,
+  JS_STRIP_DEBUG,
+  JS_STRIP_SOURCE,
   type JSRuntimePointer,
+  type JSVoid,
   type MemoryUsage,
   type ModuleLoaderFunction,
   type ModuleNormalizerFunction,
-  type InterruptHandler,
-  intrinsicsToFlags,
+  type ModuleResolverFunction,
+  type ProfilerEventHandler,
+  type StripOptions,
   ValueLifecycle,
-  JS_STRIP_DEBUG,
-  JS_STRIP_SOURCE,
-} from "@hako/etc/types";
-import { VMValue } from "@hako/vm/value";
-import { DisposableResult, Scope } from "@hako/mem/lifetime";
-import { CModuleBuilder, type CModuleInitializer } from "@hako/vm/cmodule";
+} from "../etc/types";
+import { DisposableResult, Scope } from "../mem/lifetime";
+import { CModuleBuilder, type CModuleInitializer } from "../vm/cmodule";
+import { VMContext } from "../vm/context";
+import { VMValue } from "../vm/value";
+import type { Container } from "./container";
 
 /**
  * The HakoRuntime class represents a JavaScript execution environment.
@@ -96,7 +94,7 @@ export class HakoRuntime implements Disposable {
    */
   createCModule(
     name: string,
-    handler: (initializer: CModuleInitializer) => number | void,
+    handler: (initializer: CModuleInitializer) => number | undefined,
     ctx: VMContext | undefined = undefined
   ): CModuleBuilder {
     return new CModuleBuilder(

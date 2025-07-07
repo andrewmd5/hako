@@ -1,0 +1,24 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.2.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "hako-stress-test", "client\hako-stress-test.csproj", "{46688332-F93A-505A-33B4-F65331C1BC62}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{46688332-F93A-505A-33B4-F65331C1BC62}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{46688332-F93A-505A-33B4-F65331C1BC62}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{46688332-F93A-505A-33B4-F65331C1BC62}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{46688332-F93A-505A-33B4-F65331C1BC62}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {39B1C43F-CFAE-49A2-A058-065D65334B19}
+	EndGlobalSection
+EndGlobal

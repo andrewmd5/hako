@@ -1,8 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import type { HakoRuntime } from "../src/runtime/runtime";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createHakoRuntime, decodeVariant, HAKO_PROD } from "../src";
-import fs from "node:fs/promises";
-import path from "node:path";
+import type { ModuleLoaderFunction } from "../src/etc/types";
+import type { HakoRuntime } from "../src/host/runtime";
 
 describe("JSRuntime", () => {
   let runtime: HakoRuntime;
@@ -101,17 +100,17 @@ describe("JSRuntime", () => {
     expect(systemContext.pointer).toBeGreaterThan(0);
   });
 
-  it("should create deadline interrupt handler", () => {
+  it("should create deadlin,e interrupt handler", () => {
     const handler = runtime.createDeadlineInterruptHandler(100); // 100ms deadline
 
     // Should not interrupt immediately
-    expect(handler(runtime)).toBe(false);
+    expect(handler(runtime, runtime.getSystemContext(), 0)).toBe(false);
 
     // Wait for deadline to pass
     return new Promise<void>((resolve) => {
       setTimeout(() => {
         // Should interrupt after deadline
-        expect(handler(runtime)).toBe(true);
+        expect(handler(runtime, runtime.getSystemContext(), 0)).toBe(true);
         resolve();
       }, 150);
     });
@@ -123,14 +122,14 @@ describe("JSRuntime", () => {
 
     // Should not interrupt for the first 4 steps
     for (let i = 0; i < maxGas - 1; i++) {
-      expect(handler(runtime)).toBe(false);
+      expect(handler(runtime, runtime.getSystemContext(), 0)).toBe(false);
     }
 
     // Should interrupt on the 5th step
-    expect(handler(runtime)).toBe(true);
+    expect(handler(runtime, runtime.getSystemContext(), 0)).toBe(true);
 
     // Should continue to return true after that
-    expect(handler(runtime)).toBe(true);
+    expect(handler(runtime, runtime.getSystemContext(), 0)).toBe(true);
   });
 
   it("should check if job is pending", () => {
@@ -141,8 +140,12 @@ describe("JSRuntime", () => {
   });
 
   it("should enable and disable module loader", () => {
-    const loader = (moduleName: string) => {
-      return `export default '${moduleName}';`;
+    const loader: ModuleLoaderFunction = (moduleName, attributes) => {
+      // Simulate loading a module by returning a dummy object
+      return {
+        type: "source",
+        data: `export default { name: "${moduleName}" };`,
+      };
     };
 
     const normalizer = (base: string, name: string) => {

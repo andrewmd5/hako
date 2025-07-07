@@ -1,13 +1,13 @@
+import { HakoError } from "../etc/errors";
 import {
-  ValueLifecycle,
   type ClassConstructorHandler,
   type ClassOptions,
   type HostCallbackFunction,
-} from "@hako/etc/types";
-import type { VMContext } from "@hako/vm/context";
-import { VMValue } from "@hako/vm/value";
-import { Scope } from "@hako/mem/lifetime";
-import { HakoError } from "@hako/etc/errors";
+  ValueLifecycle,
+} from "../etc/types";
+import { Scope } from "../mem/lifetime";
+import type { VMContext } from "./context";
+import { VMValue } from "./value";
 
 /**
  * Builder for creating C modules in the main context.
@@ -342,7 +342,6 @@ export class CModuleInitializer implements Disposable {
 
     if (this.parentBuilder) {
       this.parentBuilder._registerClass(classObj);
-      classObj._setParentInitializer(this);
     }
 
     this.setExport(name, classObj.ctor);
@@ -445,9 +444,6 @@ export class CModuleClass implements Disposable {
       throw error;
     }
   }
-
-  /** @internal */
-  _setParentInitializer(initializer: CModuleInitializer): void {}
 
   private setupClass(
     name: string,

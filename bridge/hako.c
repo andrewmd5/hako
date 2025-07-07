@@ -1209,8 +1209,12 @@ LEPUSValue* WASM_EXPORT(HAKO_GetModuleNamespace)(
   return jsvalue_to_heap(ctx, LEPUS_GetModuleNamespace(ctx, module));
 }
 
-HAKOTypeOf WASM_EXPORT(HAKO_Typeof)(LEPUSContext* ctx, LEPUSValueConst* value) {
-  return LEPUS_TypeOf(ctx, *value);
+HAKOTypeOf WASM_EXPORT(HAKO_TypeOf)(LEPUSContext* ctx, LEPUSValueConst* value) {
+  return (HAKOTypeOf)LEPUS_GetTypeOf(ctx, value);
+}
+
+LEPUS_BOOL WASM_EXPORT(HAKO_IsNull)(LEPUSValueConst* value) {
+  return LEPUS_IsNull(*value);
 }
 
 LEPUSAtom HAKO_AtomLength = 0;

@@ -1,9 +1,9 @@
 /**
  * error.ts - Error handling utilities for PrimJS wrapper
  */
-import type { HakoExports } from "@hako/etc/ffi";
-import type { MemoryManager } from "@hako/mem/memory";
-import type { JSContextPointer, JSValuePointer } from "@hako/etc/types";
+import type { HakoExports } from "../etc/ffi";
+import type { JSContextPointer, JSValuePointer } from "../etc/types";
+import type { MemoryManager } from "../mem/memory";
 
 /**
  * Base error class for Hako-related errors.
@@ -183,7 +183,7 @@ export class ErrorManager {
         name: errorObj.name,
         cause: errorObj.cause,
       };
-    } catch (e) {
+    } catch (_e) {
       // Not valid JSON, just return the string
       return { message: errorStr };
     }

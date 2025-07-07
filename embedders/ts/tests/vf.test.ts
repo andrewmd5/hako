@@ -1,13 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import type { ValueFactory } from "../src/vm/value-factory";
-import type { VMContext } from "../src/vm/context";
-import type { HakoRuntime } from "../src/runtime/runtime";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createHakoRuntime } from "../src/";
-import fs from "node:fs/promises";
-import path from "node:path";
-import type { HostCallbackFunction } from "../src/etc/types";
-import type { VMValue } from "../src/vm/value";
 import { HakoError } from "../src/etc/errors";
+import type { HostCallbackFunction } from "../src/etc/types";
+import type { HakoRuntime } from "../src/host/runtime";
+import type { VMContext } from "../src/vm/context";
+import type { VMValue } from "../src/vm/value";
 
 describe("ValueFactory", () => {
   let runtime: HakoRuntime;
@@ -16,8 +13,9 @@ describe("ValueFactory", () => {
   // Helper to load WASM binary
   const loadWasmBinary = async () => {
     // Adjust the path as necessary for your project
-    const wasmPath = path.join(__dirname, "../../../bridge/build/hako.wasm");
-    return await fs.readFile(wasmPath);
+    const wasmPath = await Bun.file("../../bridge/build/hako.wasm").bytes();
+
+    return wasmPath;
   };
 
   beforeEach(async () => {
@@ -505,7 +503,8 @@ describe("ValueFactory", () => {
       using errorVal = context.newValue(jsError);
 
       using stack = errorVal.getProperty("stack");
-      expect(stack.asString()).toEqual(jsError.stack);
+      expect(jsError.stack).toBeDefined();
+      expect(stack.asString()).toEqual(jsError.stack as string);
     });
 
     it("should create Error with cause", () => {

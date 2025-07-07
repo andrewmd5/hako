@@ -7,29 +7,29 @@
  * and context/runtime registrations.
  */
 
-import type { VMContext } from "@hako/vm/context";
-import type { HakoExports } from "@hako/etc/ffi";
-import { DisposableResult, Scope } from "@hako/mem/lifetime";
-import type { MemoryManager } from "@hako/mem/memory";
-import type { HakoRuntime } from "@hako/runtime/runtime";
+import type { HakoExports } from "../etc/ffi";
 import type {
+  ClassConstructorHandler,
+  ClassFinalizerHandler,
   HostCallbackFunction,
+  InterruptHandler,
   JSContextPointer,
   JSRuntimePointer,
   JSValuePointer,
+  JSVoid,
+  ModuleInitFunction,
   ModuleLoaderFunction,
   ModuleNormalizerFunction,
-  InterruptHandler,
+  ModuleResolverFunction,
   ProfilerEventHandler,
   TraceEvent,
-  JSVoid,
-  ModuleResolverFunction,
-  ModuleInitFunction,
-  ClassConstructorHandler,
-  ClassFinalizerHandler,
-} from "@hako/etc/types";
-import { VMValue } from "@hako/vm/value";
-import { CModuleInitializer } from "@hako/vm/cmodule";
+} from "../etc/types";
+import { DisposableResult, Scope } from "../mem/lifetime";
+import type { MemoryManager } from "../mem/memory";
+import { CModuleInitializer } from "../vm/cmodule";
+import type { VMContext } from "../vm/context";
+import { VMValue } from "../vm/value";
+import type { HakoRuntime } from "./runtime";
 
 const HAKO_MODULE_SOURCE_STRING = 0;
 const HAKO_MODULE_SOURCE_PRECOMPILED = 1;
@@ -443,7 +443,7 @@ export class CallbackManager {
         try {
           using errorHandle = ctx.newValue(error as Error);
           return this.exports.HAKO_Throw(ctxPtr, errorHandle.getHandle());
-        } catch (conversionError) {
+        } catch (_conversionError) {
           return this.exports.HAKO_GetUndefined();
         }
       }
@@ -577,7 +577,6 @@ export class CallbackManager {
           return this.createModuleSourceString(ctxPtr, moduleResult.data);
         case "precompiled":
           return this.createModuleSourcePrecompiled(ctxPtr, moduleResult.data);
-        case "error":
         default:
           return this.createModuleSourceError(ctxPtr);
       }
@@ -668,7 +667,7 @@ export class CallbackManager {
 
       const shouldInterrupt = this.interruptHandler(runtime, ctx, opaque);
       return shouldInterrupt === true;
-    } catch (error) {
+    } catch (_error) {
       return false;
     }
   }
@@ -688,7 +687,7 @@ export class CallbackManager {
     try {
       const event = JSON.parse(this.memory.readString(eventPtr)) as TraceEvent;
       this.profilerHandler.onFunctionStart(ctx, event, opaque);
-    } catch (error) {
+    } catch (_error) {
       // Silent fail for profiling
     }
   }
@@ -708,7 +707,7 @@ export class CallbackManager {
     try {
       const event = JSON.parse(this.memory.readString(eventPtr)) as TraceEvent;
       this.profilerHandler.onFunctionEnd(ctx, event, opaque);
-    } catch (error) {
+    } catch (_error) {
       // Silent fail for profiling
     }
   }
@@ -757,7 +756,7 @@ export class CallbackManager {
         try {
           using errorHandle = ctx.newValue(error as Error);
           return this.exports.HAKO_Throw(ctxPtr, errorHandle.getHandle());
-        } catch (conversionError) {
+        } catch (_conversionError) {
           return this.exports.HAKO_GetUndefined();
         }
       }
@@ -778,7 +777,7 @@ export class CallbackManager {
     try {
       const userData = opaque;
       handler(runtime, userData, classId);
-    } catch (error) {
+    } catch (_error) {
       // Silent fail for finalizers
     }
   }
@@ -832,7 +831,7 @@ export class CallbackManager {
       // The handler is responsible for calling _setParentBuilder and managing the hierarchy
       const result = handler(initializer);
       return typeof result === "number" ? result : 0;
-    } catch (error) {
+    } catch (_error) {
       return -1;
     }
   }

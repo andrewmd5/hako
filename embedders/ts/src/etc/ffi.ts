@@ -1,7 +1,7 @@
 /**
- * Generated on: 2025-07-07 12:36:00
+ * Generated on: 2025-07-07 18:20:06
  * Source file: hako.h
- * Git commit: 151ea8c29697156d5e68e69095db94039ea061fe
+ * Git commit: 6900874387535d7d9849f5e56f1d0315cc0cfa82
  * Git branch: vnext
  * Git author: Andrew Sampson <andrew@Andrews-Mac-Studio.local>
  * Git remote: https://github.com/andrewmd5/hako.git
@@ -12,13 +12,12 @@
  */
 
 import type {
-  JSRuntimePointer,
-  JSContextPointer,
-  JSValuePointer,
-  JSValueConstPointer,
   CString,
-  JSVoid,
-  OwnedHeapChar,
+  HAKOTypeOf,
+  JSContextPointer,
+  JSRuntimePointer,
+  JSValueConstPointer,
+  JSValuePointer,
   LEPUS_BOOL,
   LEPUSModuleDef,
 } from "./types";
@@ -1056,6 +1055,13 @@ export interface HakoExports {
     obj: JSValueConstPointer
   ): LEPUS_BOOL;
   /**
+   * Checks if a value is null
+   *
+   * @param value Value to check
+   * @returns LEPUS_BOOL - True if value is null
+   */
+  HAKO_IsNull(value: JSValueConstPointer): LEPUS_BOOL;
+  /**
    * Checks if a value is a typed array
    *
    * @param ctx Context to use
@@ -1103,11 +1109,11 @@ export interface HakoExports {
     indent: number
   ): JSValuePointer;
   /**
-   * Gets the type of a value as a string
+   * Gets the type of a value
    *
    * @param ctx Context to use
    * @param value Value to get type of
-   * @returns OwnedHeapChar* - Type name
+   * @returns HAKOTypeOf - Type id
    */
-  HAKO_Typeof(ctx: JSContextPointer, value: JSValueConstPointer): OwnedHeapChar;
+  HAKO_TypeOf(ctx: JSContextPointer, value: JSValueConstPointer): HAKOTypeOf;
 }

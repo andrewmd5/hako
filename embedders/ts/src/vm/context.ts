@@ -5,30 +5,30 @@
  * with the JavaScript environment inside the VM.
  */
 
-import { VMValue } from "@hako/vm/value";
 import {
+  type ContextEvalOptions,
+  type CString,
+  evalOptionsToFlags,
+  type HostCallbackFunction,
   type JSContextPointer,
   type JSValuePointer,
-  ValueLifecycle,
-  type HostCallbackFunction,
-  type VMContextResult,
-  type ContextEvalOptions,
-  evalOptionsToFlags,
   type PromiseExecutor,
-  type CString,
-} from "@hako/etc/types";
-import type { SuccessOrFail } from "@hako/vm/vm-interface";
+  ValueLifecycle,
+  type VMContextResult,
+} from "../etc/types";
+import { HakoDeferredPromise } from "../helpers/deferred-promise";
+import { VMIterator } from "../helpers/iterator-helper";
+import type { Container } from "../host/container";
+import type { HakoRuntime } from "../host/runtime";
 import {
   type DisposableFail,
   DisposableResult,
   type DisposableSuccess,
   Scope,
-} from "@hako/mem/lifetime";
-import type { HakoRuntime } from "@hako/runtime/runtime";
-import type { Container } from "@hako/runtime/container";
-import { ValueFactory } from "@hako/vm/value-factory";
-import { HakoDeferredPromise } from "@hako/helpers/deferred-promise";
-import { VMIterator } from "@hako/helpers/iterator-helper";
+} from "../mem/lifetime";
+import { VMValue } from "./value";
+import { ValueFactory } from "./value-factory";
+import type { SuccessOrFail } from "./vm-interface";
 
 /**
  * Represents a JavaScript execution context within the PrimJS virtual machine.
@@ -530,8 +530,8 @@ export class VMContext implements Disposable {
     using vmResolveResult = Scope.withScope((scope) => {
       using global = this.getGlobalObject();
       const vmPromise = scope.manage(global.getProperty("Promise"));
-      // biome-ignore lint/style/noNonNullAssertion: <explanation>
-      const vmPromiseResolve = scope.manage(vmPromise?.getProperty("resolve"))!;
+
+      const vmPromiseResolve = scope.manage(vmPromise?.getProperty("resolve"));
       return this.callFunction(vmPromiseResolve, vmPromise, promiseLikeHandle);
     });
 
@@ -578,10 +578,10 @@ export class VMContext implements Disposable {
         );
 
         const promiseHandle = scope.manage(resolvedPromise);
-        // biome-ignore lint/style/noNonNullAssertion: <explanation>
+       
         const promiseThenHandle = scope.manage(
           promiseHandle.getProperty("then")
-        )!;
+        );
         this.callFunction(
           promiseThenHandle,
           promiseHandle,
@@ -941,7 +941,6 @@ export class VMContext implements Disposable {
 
     // If an executor function is provided, wrap it into a native Promise
     if (value && typeof value === "function") {
-      // biome-ignore lint/style/noParameterAssign: "noyou"
       value = new Promise(value);
     }
 

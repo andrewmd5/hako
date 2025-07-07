@@ -1,10 +1,10 @@
-import type { HakoRuntime } from "@hako/runtime/runtime";
-import type { VMContext } from "@hako/vm/context";
-import type { VMValue } from "@hako/vm/value";
-import { PrimJSError } from "@hako/etc/errors";
-import type { DisposableResult } from "@hako/mem/lifetime";
-import type { VmCallResult } from "@hako/vm/vm-interface";
-import type { CModuleInitializer } from "@hako/vm/cmodule";
+import { PrimJSError } from "../etc/errors";
+import type { HakoRuntime } from "../host/runtime";
+import type { DisposableResult } from "../mem/lifetime";
+import type { CModuleInitializer } from "../vm/cmodule";
+import type { VMContext } from "../vm/context";
+import type { VMValue } from "../vm/value";
+import type { VmCallResult } from "../vm/vm-interface";
 
 /**
  * Opaque type helper that wraps a basic type with a specific string tag
@@ -48,6 +48,11 @@ export type JSValuePointer = number;
  * Maps to LEPUSValueConst* in C code.
  */
 export type JSValueConstPointer = number;
+
+/**
+ * A numerical value representing the JavaScript type of a value.
+ */
+export type HAKOTypeOf = number;
 
 /**
  * JavaScript property atom identifier. Represents a property name
@@ -131,7 +136,7 @@ export function LEPUS_BOOLToBoolean(value: LEPUS_BOOL): boolean {
 export type HostCallbackFunction<VmHandle> = (
   this: VmHandle,
   ...args: VmHandle[]
-  // biome-ignore lint/suspicious/noConfusingVoidType: <explanation>
+  // biome-ignore lint/suspicious/noConfusingVoidType: you're annoying
 ) => VmHandle | VmCallResult<VmHandle> | void;
 
 export type ModuleLoaderResult =
@@ -737,17 +742,14 @@ export enum ABIJSType {
  * String representation of JavaScript types, aligned with typeof operator results.
  */
 export type JSType =
-  | "null"
   | "undefined"
+  | "object"
+  | "string"
+  | "symbol"
   | "boolean"
   | "number"
-  | "string"
-  | "object"
-  | "function"
-  | "symbol"
   | "bigint"
-  | "module"
-  | "unknown";
+  | "function";
 
 //=============================================================================
 // Value Lifecycle Management

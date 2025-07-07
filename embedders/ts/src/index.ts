@@ -1,33 +1,11 @@
 import { useClock, useRandom, useStdio, WASI } from "uwasi";
-import type { HakoExports } from "@hako/etc/ffi";
-import { MemoryManager } from "@hako/mem/memory";
-import { CallbackManager } from "@hako/runtime/callback";
-import { HakoRuntime } from "@hako/runtime/runtime";
-import type { Base64, InterruptHandler } from "@hako/etc/types";
-import { Container } from "@hako/runtime/container";
-import { HakoError, PrimJSError } from "@hako/etc/errors";
-import type { VMContext } from "@hako/vm/context";
-import type { VMValue } from "@hako/vm/value";
-import type {
-  VMContextResult,
-  ProfilerEventHandler,
-  TraceEvent,
-  TraceEventPhase,
-  ContextOptions,
-  Intrinsics,
-  ContextEvalOptions,
-  MemoryUsage,
-  HakoBuildInfo,
-  TypedArrayType,
-  HostCallbackFunction,
-  ModuleLoaderFunction,
-  ModuleNormalizerFunction,
-} from "@hako/etc/types";
-import {
-  type NativeBox,
-  Scope,
-  type DisposableResult,
-} from "@hako/mem/lifetime";
+import { HakoError } from "./etc/errors";
+import type { HakoExports } from "./etc/ffi";
+import type { Base64, InterruptHandler } from "./etc/types";
+import { CallbackManager } from "./host/callback";
+import { Container } from "./host/container";
+import { HakoRuntime } from "./host/runtime";
+import { MemoryManager } from "./mem/memory";
 
 /**
  * Default initial memory size for the WebAssembly instance (24MB)
@@ -186,6 +164,7 @@ export async function createHakoRuntime<TOptions, TResponse>(
       options.loader.binary,
       imports
     );
+    //@ts-expect-error
     instance = result.instance;
   } else if (options.loader.fetch && options.loader.src) {
     const result = await WebAssembly.instantiateStreaming(
@@ -277,35 +256,3 @@ export const decodeVariant = (encoded: Base64): Uint8Array => {
 // Re-export production and debug modules
 export { default as HAKO_PROD } from "./variants/hako.g";
 export { default as HAKO_DEBUG } from "./variants/hako-debug.g";
-
-// --- Re-Exports ---
-
-// Value exports
-export { PrimJSError, HakoError, Scope };
-
-// Type-only exports
-export type {
-  Base64,
-  InterruptHandler,
-  HakoRuntime,
-  VMContext,
-  VMValue,
-  VMContextResult,
-  ProfilerEventHandler,
-  TraceEvent,
-  TraceEventPhase,
-  ContextOptions,
-  Intrinsics,
-  ContextEvalOptions,
-  MemoryUsage,
-  HakoBuildInfo,
-  TypedArrayType,
-  HostCallbackFunction,
-  ModuleLoaderFunction,
-  ModuleNormalizerFunction,
-  NativeBox,
-  DisposableResult,
-  HakoExports,
-  Container,
-  MemoryManager,
-};

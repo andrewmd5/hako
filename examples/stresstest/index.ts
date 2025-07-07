@@ -3,11 +3,11 @@ import {
   decodeVariant,
   HAKO_PROD,
   createHakoRuntime,
-  type VMContext,
-  type HakoRuntime,
-  type MemoryUsage,
-  type VMValue,
 } from "hakojs";
+import type { VMContext } from "hakojs/vm/context";
+import type { MemoryUsage } from "hakojs/etc/types";
+import type { HakoRuntime } from "hakojs/host/runtime";
+import type { VMValue } from "hakojs/vm/value";
 
 // Types
 interface VMInstance {
