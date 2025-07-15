@@ -82,7 +82,6 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 else()
   # Release mode - use full optimization
   set(OPTIMIZATION_FLAGS "-O3")
-  set(WASM_OPT_FLAG "--wasm-opt")
 endif()
 
 # Configuration options
@@ -320,7 +319,10 @@ target_include_directories(hako_reactor PRIVATE
 target_link_options(hako_reactor PRIVATE
     -Wl,--import-memory,--export-memory
     -mexec-model=reactor
+    
     -Wl,--no-entry
+    -Wl,--stack-first
+    -Wl,--export=__stack_pointer
     -Wl,--export=malloc
     -Wl,--export=free
     -Wl,--export=__heap_base
@@ -329,7 +331,6 @@ target_link_options(hako_reactor PRIVATE
     -Wl,-z,stack-size=${WASM_STACK_SIZE}
     -Wl,--initial-memory=${WASM_INITIAL_MEMORY}
     -Wl,--max-memory=${WASM_MAX_MEMORY}
-    ${WASM_OPT_FLAG}
 )
 
 message(STATUS "Configuration summary:")
