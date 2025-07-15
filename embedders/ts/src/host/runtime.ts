@@ -13,7 +13,6 @@ import {
   type ModuleResolverFunction,
   type ProfilerEventHandler,
   type StripOptions,
-  ValueLifecycle,
 } from "../etc/types";
 import { DisposableResult, Scope } from "../mem/lifetime";
 import { CModuleBuilder, type CModuleInitializer } from "../vm/cmodule";
@@ -507,7 +506,7 @@ export class HakoRuntime implements Disposable {
       contextPointer: ctxPtr,
     });
 
-    const value = VMValue.fromHandle(context, resultPtr, ValueLifecycle.Owned);
+    const value = VMValue.fromHandle(context, resultPtr, "owned");
 
     if (value.type === "number") {
       // If the result is a number, it represents the number of executed jobs

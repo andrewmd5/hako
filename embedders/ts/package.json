@@ -62,10 +62,11 @@
   "devDependencies": {
     "@types/node": "22.13.14",
     "typescript": "5.8.2",
-    "zx": "8.5.2"
+    "zx": "8.5.2",
+    "@types/bun": "^1.2.18"
   },
   "dependencies": {
-    "@types/bun": "^1.2.18",
+
     "uwasi": "1.4.1"
   }
 }

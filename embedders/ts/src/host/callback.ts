@@ -388,7 +388,7 @@ export class CallbackManager {
       return this.exports.HAKO_GetUndefined();
     }
 
-    return Scope.withScopeMaybeAsync(this, function* (awaited, scope) {
+    return Scope.withScope((scope) => {
       // Create handles for 'this' and arguments
       const thisHandle = scope.manage(ctx.borrowValue(thisPtr));
       const argHandles = new Array<VMValue>(argc);
@@ -400,7 +400,7 @@ export class CallbackManager {
       }
 
       try {
-        const result = yield* awaited(callback.apply(thisHandle, argHandles));
+        const result = callback.apply(thisHandle, argHandles);
 
         if (result) {
           if (result instanceof VMValue) {
@@ -447,7 +447,7 @@ export class CallbackManager {
           return this.exports.HAKO_GetUndefined();
         }
       }
-    }) as number;
+    });
   }
 
   /**
@@ -548,27 +548,25 @@ export class CallbackManager {
     moduleNamePtr: number,
     attributesPtr: number
   ): number {
-    return Scope.withScopeMaybeAsync(this, function* (awaited, _scope) {
-      if (!this.moduleLoader) {
-        return this.createModuleSourceError(ctxPtr);
-      }
+    if (!this.moduleLoader) {
+      return this.createModuleSourceError(ctxPtr);
+    }
 
-      const ctx = this.getContext(ctxPtr);
-      if (!ctx) {
-        return this.createModuleSourceError(ctxPtr);
-      }
-      const moduleName = this.memory.readString(moduleNamePtr);
+    const ctx = this.getContext(ctxPtr);
+    if (!ctx) {
+      return this.createModuleSourceError(ctxPtr);
+    }
+    const moduleName = this.memory.readString(moduleNamePtr);
 
-      let attributes: Record<string, string> | undefined;
-      if (attributesPtr !== 0) {
-        using att = ctx.borrowValue(attributesPtr);
-        using box = att.toNativeValue<Record<string, string>>();
-        attributes = box.value;
-      }
+    let attributes: Record<string, string> | undefined;
+    if (attributesPtr !== 0) {
+      using att = ctx.borrowValue(attributesPtr);
+      using box = att.toNativeValue<Record<string, string>>();
+      attributes = box.value;
+    }
 
-      const moduleResult = yield* awaited(
-        this.moduleLoader(moduleName, attributes)
-      );
+    try {
+      const moduleResult = this.moduleLoader(moduleName, attributes);
       if (moduleResult === null) {
         return this.createModuleSourceError(ctxPtr);
       }
@@ -580,7 +578,9 @@ export class CallbackManager {
         default:
           return this.createModuleSourceError(ctxPtr);
       }
-    }) as number;
+    } catch {
+      return this.createModuleSourceError(ctxPtr);
+    }
   }
 
   handleModuleResolve(
@@ -624,20 +624,19 @@ export class CallbackManager {
     baseNamePtr: number,
     moduleNamePtr: number
   ): number {
-    return Scope.withScopeMaybeAsync(this, function* (awaited, _scope) {
-      if (!this.moduleNormalizer) {
-        return moduleNamePtr;
-      }
+    if (!this.moduleNormalizer) {
+      return moduleNamePtr;
+    }
 
-      const baseName = this.memory.readString(baseNamePtr);
-      const moduleName = this.memory.readString(moduleNamePtr);
+    const baseName = this.memory.readString(baseNamePtr);
+    const moduleName = this.memory.readString(moduleNamePtr);
 
-      const normalizedName = yield* awaited(
-        this.moduleNormalizer(baseName, moduleName)
-      );
-
+    try {
+      const normalizedName = this.moduleNormalizer(baseName, moduleName);
       return this.memory.allocateString(_ctxPtr, normalizedName);
-    }) as JSValuePointer;
+    } catch {
+      return moduleNamePtr;
+    }
   }
 
   /**
@@ -729,7 +728,7 @@ export class CallbackManager {
       return this.exports.HAKO_GetUndefined();
     }
 
-    return Scope.withScopeMaybeAsync(this, function* (awaited, scope) {
+    return Scope.withScope((scope) => {
       const newTarget = scope.manage(ctx.borrowValue(newTargetPtr));
 
       const args: VMValue[] = [];
@@ -740,7 +739,7 @@ export class CallbackManager {
       }
 
       try {
-        const result = yield* awaited(handler(ctx, newTarget, args, classId));
+        const result = handler(ctx, newTarget, args, classId);
 
         if (result && result instanceof VMValue) {
           const duplicatedHandle = this.exports.HAKO_DupValuePointer(
@@ -760,7 +759,7 @@ export class CallbackManager {
           return this.exports.HAKO_GetUndefined();
         }
       }
-    }) as number;
+    });
   }
 
   handleClassFinalizer(rtPtr: number, opaque: number, classId: number): void {

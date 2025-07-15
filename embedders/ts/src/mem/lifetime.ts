@@ -1,4 +1,3 @@
-import { type MaybeAsyncBlock, maybeAsync } from "../helpers/asyncify-helpers";
 import type { SuccessOrFail } from "../vm/vm-interface";
 /**
  * A container for native values that need deterministic cleanup.
@@ -433,38 +432,6 @@ export class Scope implements Disposable {
     } finally {
       scopeFinally(scope, blockError);
     }
-  }
-
-  /**
-   * Executes a potentially async function within a scope and automatically disposes the scope afterward.
-   *
-   * Similar to withScope, but supports functions that may return promises.
-   * The function will execute synchronously if possible, but return a Promise
-   * if the block yields any promises.
-   *
-   * @template Return - The return type of the function
-   * @template This - The type of 'this' in the function
-   * @template Yielded - The type of values yielded in the generator
-   * @param _this - The 'this' context for the function
-   * @param block - The function to execute within the scope
-   * @returns The result of the function, or a Promise if the block is asynchronous
-   */
-  static withScopeMaybeAsync<Return, This, Yielded>(
-    _this: This,
-    block: MaybeAsyncBlock<Return, This, Yielded, [Scope]>
-  ): Return | Promise<Return> {
-    return maybeAsync(undefined, function* (awaited) {
-      const scope = new Scope();
-      let blockError: Error | undefined;
-      try {
-        return yield* awaited.of(block.call(_this, awaited, scope));
-      } catch (error) {
-        blockError = error as unknown as Error;
-        throw error;
-      } finally {
-        scopeFinally(scope, blockError);
-      }
-    });
   }
 
   /**

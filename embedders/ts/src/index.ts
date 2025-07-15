@@ -140,7 +140,11 @@ export async function createHakoRuntime<TOptions, TResponse>(
         stderr: options.wasm?.io?.stderr || ((lines) => console.error(lines)),
       }),
       useClock,
-      useRandom(),
+      useRandom({
+        randomFillSync: (buffer: Uint8Array) => {
+          return crypto.getRandomValues(buffer);
+        }
+      }),
     ],
     args: options.wasm?.args || [],
     env: options.wasm?.env || {},

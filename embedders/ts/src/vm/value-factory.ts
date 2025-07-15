@@ -2,7 +2,6 @@ import { HakoError } from "../etc/errors";
 import {
   detectCircularReferences,
   type HostCallbackFunction,
-  ValueLifecycle,
 } from "../etc/types";
 import type { Container } from "../host/container";
 import type { VMContext } from "./context";
@@ -181,7 +180,7 @@ export class ValueFactory implements Disposable {
       stack.getHandle()
     );
 
-    return new VMValue(this.context, errorPtr, ValueLifecycle.Owned);
+    return new VMValue(this.context, errorPtr, "owned");
   }
 
   /**
@@ -207,7 +206,7 @@ export class ValueFactory implements Disposable {
       options.name
     );
 
-    return new VMValue(this.context, functionId, ValueLifecycle.Owned);
+    return new VMValue(this.context, functionId, "owned");
   }
 
   /**
@@ -220,7 +219,7 @@ export class ValueFactory implements Disposable {
     return new VMValue(
       this.context,
       this.container.exports.HAKO_GetUndefined(),
-      ValueLifecycle.Borrowed
+      "borrowed"
     );
   }
 
@@ -234,7 +233,7 @@ export class ValueFactory implements Disposable {
     return new VMValue(
       this.context,
       this.container.exports.HAKO_GetNull(),
-      ValueLifecycle.Borrowed
+      "borrowed"
     );
   }
 
@@ -250,14 +249,14 @@ export class ValueFactory implements Disposable {
       return new VMValue(
         this.context,
         this.container.exports.HAKO_GetTrue(),
-        ValueLifecycle.Borrowed
+        "borrowed"
       );
     }
 
     return new VMValue(
       this.context,
       this.container.exports.HAKO_GetFalse(),
-      ValueLifecycle.Borrowed
+      "borrowed"
     );
   }
 
@@ -273,7 +272,7 @@ export class ValueFactory implements Disposable {
       this.context.pointer,
       value
     );
-    return new VMValue(this.context, numPtr, ValueLifecycle.Owned);
+    return new VMValue(this.context, numPtr, "owned");
   }
 
   /**
@@ -293,7 +292,7 @@ export class ValueFactory implements Disposable {
       strPtr
     );
     this.container.memory.freeMemory(this.context.pointer, strPtr);
-    return new VMValue(this.context, jsStrPtr, ValueLifecycle.Owned);
+    return new VMValue(this.context, jsStrPtr, "owned");
   }
 
   /**
@@ -339,7 +338,7 @@ export class ValueFactory implements Disposable {
       throw lastError;
     }
 
-    return new VMValue(this.context, bigIntPtr, ValueLifecycle.Owned);
+    return new VMValue(this.context, bigIntPtr, "owned");
   }
 
   /**
@@ -361,7 +360,7 @@ export class ValueFactory implements Disposable {
         value.getHandle(),
         isGlobal ? 1 : 0
       );
-      return new VMValue(this.context, jsSymbolPtr, ValueLifecycle.Owned);
+      return new VMValue(this.context, jsSymbolPtr, "owned");
     });
   }
 
@@ -375,7 +374,7 @@ export class ValueFactory implements Disposable {
   private createArray(value: unknown[]): VMValue {
     // Create array and populate it
     const arrayPtr = this.container.exports.HAKO_NewArray(this.context.pointer);
-    const jsArray = new VMValue(this.context, arrayPtr, ValueLifecycle.Owned);
+    const jsArray = new VMValue(this.context, arrayPtr, "owned");
 
     for (let i = 0; i < value.length; i++) {
       using item = this.fromNativeValue(value[i]);
@@ -408,7 +407,7 @@ export class ValueFactory implements Disposable {
       throw error;
     }
 
-    return new VMValue(this.context, date, ValueLifecycle.Owned);
+    return new VMValue(this.context, date, "owned");
   }
 
   /**
@@ -437,7 +436,7 @@ export class ValueFactory implements Disposable {
       this.container.memory.freeValuePointer(this.context.pointer, valuePtr);
       throw lastError;
     }
-    return new VMValue(this.context, valuePtr, ValueLifecycle.Owned);
+    return new VMValue(this.context, valuePtr, "owned");
   }
 
   /**
@@ -471,7 +470,7 @@ export class ValueFactory implements Disposable {
       throw lastError;
     }
 
-    using jsObj = new VMValue(this.context, objPtr, ValueLifecycle.Owned);
+    using jsObj = new VMValue(this.context, objPtr, "owned");
 
     // Add all properties from the source object
     for (const key in value) {
@@ -495,7 +494,7 @@ export class ValueFactory implements Disposable {
     return new VMValue(
       this.context,
       this.container.exports.HAKO_GetGlobalObject(this.context.pointer),
-      ValueLifecycle.Owned
+      "owned"
     );
   }
 

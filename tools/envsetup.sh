@@ -13,7 +13,6 @@ BINARYEN_VERSION="version_123"
 WASI_SDK_VERSION="25"
 WASI_SDK_VERSION_FULL="${WASI_SDK_VERSION}.0"
 WABT_VERSION="1.0.37"
-BIOME_VERSION="2.0.6"
 
 # Create tool installation directory if it doesn't exist
 mkdir -p "${TOOL_INSTALL_DIR}"
@@ -27,17 +26,10 @@ if [[ "$SYS_OS" == "linux"* ]]; then
     SYS_OS="linux"
     # For WABT, we need to map Linux to Ubuntu-20.04 for downloads
     WABT_OS="ubuntu-20.04"
-    BIOME_PLATFORM="linux-x64"
 elif [[ "$SYS_OS" == "darwin"* ]] || [[ "$SYS_OS" == "msys" ]]; then
     SYS_OS="macos"
     # For WABT, we need to map macOS to macos-14 for downloads
     WABT_OS="macos-14"
-    # For Biome, we need to determine if we're on Intel or ARM Mac
-    if [[ "$SYS_ARCH" == "arm64" ]]; then
-        BIOME_PLATFORM="darwin-arm64"
-    else
-        BIOME_PLATFORM="darwin-x64"
-    fi
 else
     echo "Unsupported OS $SYS_OS"
     exit 1
@@ -103,8 +95,20 @@ if [ ! -f "$BINARYEN_BINARIES" ]; then
     TARBALL="binaryen-$BINARYEN_VERSION-$SYS_ARCH-$SYS_OS.tar.gz"
     INSTALL_URL="https://github.com/WebAssembly/binaryen/releases/download/$BINARYEN_VERSION/$TARBALL"
     download_and_extract "Binaryen $BINARYEN_VERSION" "$INSTALL_URL" "$BINARYEN_INSTALL_DIR"
+    
+    # Rename wasm-opt to wasm-post-opt if it exists
+    if [ -f "$BINARYEN_INSTALL_DIR/bin/wasm-opt" ]; then
+        echo "Renaming wasm-opt to wasm-post-opt..."
+        mv "$BINARYEN_INSTALL_DIR/bin/wasm-opt" "$BINARYEN_INSTALL_DIR/bin/wasm-post-opt"
+    fi
 else
     echo "Binaryen $BINARYEN_VERSION already installed at $BINARYEN_INSTALL_DIR"
+    
+    # Check if we need to rename wasm-opt to wasm-post-opt (for existing installations)
+    if [ -f "$BINARYEN_INSTALL_DIR/bin/wasm-opt" ] && [ ! -f "$BINARYEN_INSTALL_DIR/bin/wasm-post-opt" ]; then
+        echo "Renaming existing wasm-opt to wasm-post-opt..."
+        mv "$BINARYEN_INSTALL_DIR/bin/wasm-opt" "$BINARYEN_INSTALL_DIR/bin/wasm-post-opt"
+    fi
 fi
 
 # Download and install WASI SDK
@@ -156,17 +160,6 @@ else
     echo "WABT $WABT_VERSION already installed at $WABT_INSTALL_DIR"
 fi
 
-# Download and install Biome
-BIOME_INSTALL_DIR="$TOOL_INSTALL_DIR/biome-$BIOME_VERSION"
-BIOME_BINARY="$BIOME_INSTALL_DIR/bin/biome"
-if [ ! -f "$BIOME_BINARY" ]; then
-    mkdir -p "$BIOME_INSTALL_DIR/bin"
-    BIOME_INSTALL_URL="https://github.com/biomejs/biome/releases/download/cli%2Fv$BIOME_VERSION/biome-$BIOME_PLATFORM"
-    download_binary "Biome $BIOME_VERSION" "$BIOME_INSTALL_URL" "$BIOME_BINARY"
-else
-    echo "Biome $BIOME_VERSION already installed at $BIOME_INSTALL_DIR"
-fi
-
 # Export PATH and environment variables
 cat > "$TOOL_INSTALL_DIR/env.sh" << EOF
 #!/bin/bash
@@ -174,7 +167,7 @@ cat > "$TOOL_INSTALL_DIR/env.sh" << EOF
 # Source this file to set up environment variables
 
 export WASI_SDK_PATH="$WASI_SDK_INSTALL_DIR"
-export PATH="$BINARYEN_INSTALL_DIR/bin:$WASI_SDK_INSTALL_DIR/bin:$WABT_INSTALL_DIR/bin:$BIOME_INSTALL_DIR/bin:\$PATH"
+export PATH="$BINARYEN_INSTALL_DIR/bin:$WASI_SDK_INSTALL_DIR/bin:$WABT_INSTALL_DIR/bin:\$PATH"
 
 # Print environment information
 echo "WebAssembly development environment configured:"
@@ -182,7 +175,6 @@ echo "  WASI_SDK_PATH: \$WASI_SDK_PATH"
 echo "  Binaryen: $BINARYEN_VERSION"
 echo "  WASI SDK: $WASI_SDK_VERSION_FULL"
 echo "  WABT: $WABT_VERSION"
-echo "  Biome: $BIOME_VERSION"
 EOF
 
 chmod +x "$TOOL_INSTALL_DIR/env.sh"

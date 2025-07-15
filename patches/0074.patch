@@ -1,0 +1,231 @@
+From a74bfd547d60905bee1b5f9de861a0e75bcac100 Mon Sep 17 00:00:00 2001
+From: andrewmd5 <1297077+andrewmd5@users.noreply.github.com>
+Date: Tue, 15 Jul 2025 18:40:50 +0900
+Subject: [PATCH] feat: crypto global
+
+Adds support for:
+- randomUUIDv7() returns a UUID v7, a monotonic UUID suitable for sorting and databases. You can also provide your own timestamp offset.
+- randomUUID() returns a UUID (v4)
+- getRandomValues() returns  cryptographically strong random values.
+---
+ src/interpreter/quickjs/include/quickjs.h |   1 +
+ src/interpreter/quickjs/source/quickjs.cc | 184 ++++++++++++++++++++++
+ 2 files changed, 185 insertions(+)
+
+diff --git a/src/interpreter/quickjs/include/quickjs.h b/src/interpreter/quickjs/include/quickjs.h
+index 8be6725..7e85792 100644
+--- a/src/interpreter/quickjs/include/quickjs.h
++++ b/src/interpreter/quickjs/include/quickjs.h
+@@ -772,6 +772,7 @@ QJS_HIDE void LEPUS_AddIntrinsicProxy(LEPUSContext *ctx);
+ QJS_HIDE void LEPUS_AddIntrinsicMapSet(LEPUSContext *ctx);
+ QJS_HIDE void LEPUS_AddIntrinsicTypedArrays(LEPUSContext *ctx);
+ QJS_HIDE void LEPUS_AddIntrinsicPromise(LEPUSContext *ctx);
++QJS_HIDE void LEPUS_AddIntrinsicCrypto(LEPUSContext *ctx);
+ #ifdef QJS_UNITTEST
+ QJS_HIDE LEPUSValue lepus_string_codePointRange(LEPUSContext *ctx,
+                                                 LEPUSValueConst this_val,
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index 7f549d1..f316940 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -2044,6 +2044,7 @@ LEPUSContext *LEPUS_NewContext(LEPUSRuntime *rt) {
+   LEPUS_AddIntrinsicTypedArrays(ctx);
+   LEPUS_AddIntrinsicPromise(ctx);
+   LEPUS_AddIntrinsicPerformance(ctx);
++  LEPUS_AddIntrinsicCrypto(ctx);
+   JS_AddIntrinsicWeakRef(ctx);
+   JS_AddIntrinsicFinalizationRegistry(ctx);
+   
+@@ -47869,6 +47870,189 @@ void LEPUS_AddIntrinsicPerformance(LEPUSContext *ctx) {
+                                  countof(js_performance_obj));
+ }
+ 
++/* Crypto */
++
++static int fill_secure_random_bytes(LEPUSContext *ctx, uint8_t *buffer, size_t length)
++{
++#if defined(__WASI_SDK__)
++    // Use WASI random_get function
++    __wasi_errno_t err = __wasi_random_get(buffer, length);
++    return (err == __WASI_ERRNO_SUCCESS) ? 0 : -1;
++#else
++    FILE *urandom = fopen("/dev/urandom", "rb");
++    if (!urandom) {
++        return -1;
++    }
++    size_t bytes_read = fread(buffer, 1, length, urandom);
++    fclose(urandom);
++    return (bytes_read == length) ? 0 : -1;
++#endif
++}
++
++QJS_STATIC LEPUSValue js_crypto_getRandomValues(LEPUSContext *ctx,
++                                             LEPUSValueConst this_val,
++                                             int argc, LEPUSValueConst *argv)
++{
++    if (argc < 1) {
++        return LEPUS_ThrowTypeError(ctx, "getRandomValues requires an array argument");
++    }
++
++    LEPUSValue array = argv[0];
++    
++    LEPUSObject *p = get_typed_array(ctx, array, 0);
++    if (!p) {
++        return LEPUS_EXCEPTION;
++    }
++
++     if (p->class_id != JS_CLASS_INT8_ARRAY &&
++        p->class_id != JS_CLASS_UINT8_ARRAY &&
++        p->class_id != JS_CLASS_UINT8C_ARRAY &&
++        p->class_id != JS_CLASS_INT16_ARRAY &&
++        p->class_id != JS_CLASS_UINT16_ARRAY &&
++        p->class_id != JS_CLASS_INT32_ARRAY &&
++        p->class_id != JS_CLASS_UINT32_ARRAY
++#ifdef CONFIG_BIGNUM
++        && p->class_id != JS_CLASS_BIG_INT64_ARRAY
++        && p->class_id != JS_CLASS_BIG_UINT64_ARRAY
++#endif
++        ) {
++        return LEPUS_ThrowTypeError(ctx, "getRandomValues requires Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array, BigInt64Array, or BigUint64Array");
++    }
++
++    int element_count = p->u.array.count;
++    int shift = typed_array_size_log2(p->class_id);
++    size_t byte_length = ((size_t)element_count) << shift;
++
++    if (byte_length > 65536) {
++        return LEPUS_ThrowRangeError(ctx, "Array byte length exceeds 65536 bytes");
++    }
++
++    uint8_t *array_data = p->u.array.u.uint8_ptr;
++    
++    if (fill_secure_random_bytes(ctx, array_data, byte_length) != 0) {
++        return LEPUS_ThrowInternalError(ctx, "Failed to generate secure random bytes");
++    }
++
++    return LEPUS_DupValue(ctx, array);
++}
++
++static const char hex_to_char[16] = {
++    '0', '1', '2', '3', '4', '5', '6', '7',
++    '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'
++};
++
++QJS_STATIC LEPUSValue js_crypto_randomUUID(LEPUSContext *ctx,
++                                        LEPUSValueConst this_val,
++                                        int argc, LEPUSValueConst *argv)
++{
++    uint8_t bytes[16];
++    
++    if (fill_secure_random_bytes(ctx, bytes, 16) != 0) {
++        return LEPUS_ThrowInternalError(ctx, "Failed to generate secure random bytes");
++    }
++    
++    bytes[6] = (bytes[6] & 0x0F) | 0x40;
++    bytes[8] = (bytes[8] & 0x3F) | 0x80;
++    
++    char uuid_str[37];
++    char *p = uuid_str;
++    
++    for (int i = 0; i < 16; i++) {
++        if (i == 4 || i == 6 || i == 8 || i == 10) {
++            *p++ = '-';
++        }
++        *p++ = hex_to_char[bytes[i] >> 4];
++        *p++ = hex_to_char[bytes[i] & 0x0F];
++    }
++    *p = '\0';
++    
++    return LEPUS_NewString(ctx, uuid_str);
++}
++
++QJS_STATIC LEPUSValue js_crypto_randomUUIDv7(LEPUSContext *ctx,
++                                          LEPUSValueConst this_val,
++                                          int argc, LEPUSValueConst *argv)
++{
++    uint8_t bytes[16];
++    uint64_t timestamp_ms;
++    
++    if (argc >= 1 && !LEPUS_IsUndefined(argv[0])) {
++        if (!LEPUS_IsNumber(argv[0])) {
++            return LEPUS_ThrowTypeError(ctx, "Timestamp must be a number");
++        }
++        double ts_double;
++        if (LEPUS_ToFloat64(ctx, &ts_double, argv[0]) < 0) {
++            return LEPUS_EXCEPTION;
++        }
++        timestamp_ms = (uint64_t)ts_double;
++    } else {
++#if defined(__WASI_SDK__)
++        __wasi_timestamp_t timestamp;
++        if (__wasi_clock_time_get(__WASI_CLOCKID_REALTIME, 1000000, &timestamp) != __WASI_ERRNO_SUCCESS) {
++            return LEPUS_ThrowInternalError(ctx, "Failed to get current time");
++        }
++        timestamp_ms = timestamp / 1000000;
++#else
++        struct timespec ts;
++        if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {
++            return LEPUS_ThrowInternalError(ctx, "Failed to get current time");
++        }
++        timestamp_ms = (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
++#endif
++    }
++    
++    if (fill_secure_random_bytes(ctx, bytes, 16) != 0) {
++        return LEPUS_ThrowInternalError(ctx, "Failed to generate secure random bytes");
++    }
++    
++    bytes[0] = (timestamp_ms >> 40) & 0xFF;
++    bytes[1] = (timestamp_ms >> 32) & 0xFF;
++    bytes[2] = (timestamp_ms >> 24) & 0xFF;
++    bytes[3] = (timestamp_ms >> 16) & 0xFF;
++    bytes[4] = (timestamp_ms >> 8) & 0xFF;
++    bytes[5] = timestamp_ms & 0xFF;
++    
++    bytes[6] = (bytes[6] & 0x0F) | 0x70;
++    bytes[8] = (bytes[8] & 0x3F) | 0x80;
++    
++    char uuid_str[37];
++    char *p = uuid_str;
++    
++    for (int i = 0; i < 16; i++) {
++        if (i == 4 || i == 6 || i == 8 || i == 10) {
++            *p++ = '-';
++        }
++        *p++ = hex_to_char[bytes[i] >> 4];
++        *p++ = hex_to_char[bytes[i] & 0x0F];
++    }
++    *p = '\0';
++    
++    return LEPUS_NewString(ctx, uuid_str);
++}
++
++
++static const LEPUSCFunctionListEntry js_crypto_funcs[] = {
++    LEPUS_CFUNC_DEF("getRandomValues", 1, js_crypto_getRandomValues),
++    LEPUS_CFUNC_DEF("randomUUID", 0, js_crypto_randomUUID),
++    LEPUS_CFUNC_DEF("randomUUIDv7", 1, js_crypto_randomUUIDv7),
++    LEPUS_PROP_STRING_DEF("[Symbol.toStringTag]", "Crypto",
++                          LEPUS_PROP_CONFIGURABLE),
++};
++
++static const LEPUSCFunctionListEntry js_crypto_obj[] = {
++    LEPUS_OBJECT_DEF("crypto", js_crypto_funcs, countof(js_crypto_funcs),
++                     LEPUS_PROP_WRITABLE | LEPUS_PROP_CONFIGURABLE),
++};
++
++void LEPUS_AddIntrinsicCrypto(LEPUSContext *ctx) {
++    
++    // Add the crypto object to the global object
++    LEPUS_SetPropertyFunctionList(ctx, ctx->global_obj, js_crypto_obj,
++                                 countof(js_crypto_obj));
++}
++
++
++
+ /* Reflect */
+ 
+ QJS_STATIC LEPUSValue js_reflect_apply(LEPUSContext *ctx,
+-- 
+2.45.2
+
