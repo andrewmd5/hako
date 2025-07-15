@@ -278,9 +278,9 @@ if [ ! -f "${BUILD_DIR}/${WASM_OUTPUT_NAME}" ]; then
     exit 1
 fi
 
-# Run wasm-post-opt for asyncify
+# Run wasm-post-opt
 if [[ -x "$(command -v wasm-post-opt)" ]]; then
-    echo "Running wasm-post-opt with asyncify..."
+    echo "Running wasm-post-opt..."
     # Create a temporary file for the optimized output
     TEMP_WASM="${BUILD_DIR}/${WASM_OUTPUT_NAME}.tmp"
     
@@ -301,7 +301,6 @@ if [[ -x "$(command -v wasm-post-opt)" ]]; then
     
     # Replace the original with the optimized version
     mv "${TEMP_WASM}" "${BUILD_DIR}/${WASM_OUTPUT_NAME}"
-    echo "Asyncify completed"
 fi
 
 # Strip debug symbols if wasm-strip is available
