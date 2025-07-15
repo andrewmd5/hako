@@ -14,7 +14,6 @@ import {
   type JSContextPointer,
   type JSValuePointer,
   type PromiseExecutor,
-  ValueLifecycle,
   type VMContextResult,
 } from "../etc/types";
 import { HakoDeferredPromise } from "../helpers/deferred-promise";
@@ -263,13 +262,13 @@ export class VMContext implements Disposable {
       if (exceptionPtr !== 0) {
         this.container.memory.freeValuePointer(this.ctxPtr, resultPtr);
         return DisposableResult.fail(
-          new VMValue(this, exceptionPtr, ValueLifecycle.Owned),
+          new VMValue(this, exceptionPtr, "owned"),
           (error) => this.unwrapResult(error)
         );
       }
 
       return DisposableResult.success(
-        new VMValue(this, resultPtr, ValueLifecycle.Owned)
+        new VMValue(this, resultPtr, "owned")
       );
     } finally {
       this.container.memory.freeMemory(this.ctxPtr, codemem.pointer);
@@ -339,7 +338,7 @@ export class VMContext implements Disposable {
         );
         if (exceptionPtr !== 0) {
           return DisposableResult.fail(
-            new VMValue(this, exceptionPtr, ValueLifecycle.Owned),
+            new VMValue(this, exceptionPtr, "owned"),
             (error) => this.unwrapResult(error)
           );
         }
@@ -401,13 +400,13 @@ export class VMContext implements Disposable {
       if (exceptionPtr !== 0) {
         this.container.memory.freeValuePointer(this.ctxPtr, resultPtr);
         return DisposableResult.fail(
-          new VMValue(this, exceptionPtr, ValueLifecycle.Owned),
+          new VMValue(this, exceptionPtr, "owned"),
           (error) => this.unwrapResult(error)
         );
       }
 
       return DisposableResult.success(
-        new VMValue(this, resultPtr, ValueLifecycle.Owned)
+        new VMValue(this, resultPtr, "owned")
       );
     } finally {
       this.container.memory.freeMemory(this.ctxPtr, bytecodePtr);
@@ -497,13 +496,13 @@ export class VMContext implements Disposable {
       if (exceptionPtr !== 0) {
         this.container.memory.freeValuePointer(this.pointer, resultPtr);
         return DisposableResult.fail(
-          new VMValue(this, exceptionPtr, ValueLifecycle.Owned),
+          new VMValue(this, exceptionPtr, "owned"),
           (error) => this.unwrapResult(error)
         );
       }
 
       return DisposableResult.success(
-        new VMValue(this, resultPtr, ValueLifecycle.Owned)
+        new VMValue(this, resultPtr, "owned")
       );
     });
   }
@@ -664,7 +663,7 @@ export class VMContext implements Disposable {
       throw error;
     }
 
-    return new VMValue(this, resultPtr, ValueLifecycle.Owned);
+    return new VMValue(this, resultPtr, "owned");
   }
 
   /**
@@ -704,7 +703,7 @@ export class VMContext implements Disposable {
       this.ctxPtr,
       error.getHandle()
     );
-    return new VMValue(this, exceptionPtr, ValueLifecycle.Owned);
+    return new VMValue(this, exceptionPtr, "owned");
   }
 
   /**
@@ -769,7 +768,7 @@ export class VMContext implements Disposable {
    */
   newObject(): VMValue {
     const ptr = this.container.exports.HAKO_NewObject(this.ctxPtr);
-    return new VMValue(this, ptr, ValueLifecycle.Owned);
+    return new VMValue(this, ptr, "owned");
   }
 
   /**
@@ -783,7 +782,7 @@ export class VMContext implements Disposable {
       this.ctxPtr,
       proto.getHandle()
     );
-    return new VMValue(this, ptr, ValueLifecycle.Owned);
+    return new VMValue(this, ptr, "owned");
   }
 
   /**
@@ -928,9 +927,9 @@ export class VMContext implements Disposable {
       const rejectPtr = view.getUint32(resolveFuncsPtr + 4, true);
 
       // Wrap the pointers in JSValue objects
-      const promise = new VMValue(this, promisePtr, ValueLifecycle.Owned);
-      const resolveFunc = new VMValue(this, resolvePtr, ValueLifecycle.Owned);
-      const rejectFunc = new VMValue(this, rejectPtr, ValueLifecycle.Owned);
+      const promise = new VMValue(this, promisePtr, "owned");
+      const resolveFunc = new VMValue(this, resolvePtr, "owned");
+      const rejectFunc = new VMValue(this, rejectPtr, "owned");
 
       return new HakoDeferredPromise({
         context: this,
@@ -1002,7 +1001,7 @@ export class VMContext implements Disposable {
    * @returns A borrowed VMValue
    */
   borrowValue(ptr: JSValuePointer): VMValue {
-    return new VMValue(this, ptr, ValueLifecycle.Borrowed);
+    return new VMValue(this, ptr, "borrowed");
   }
 
   /**
@@ -1016,7 +1015,7 @@ export class VMContext implements Disposable {
   duplicateValue(ptr: JSValuePointer): VMValue {
     const duped = this.container.exports.HAKO_DupValuePointer(this.ctxPtr, ptr);
     // Create a JSValue that owns the pointer
-    return new VMValue(this, duped, ValueLifecycle.Owned);
+    return new VMValue(this, duped, "owned");
   }
 
   /**
@@ -1100,7 +1099,7 @@ export class VMContext implements Disposable {
         throw new HakoError("BJSON decoding failed", { cause: error });
       }
 
-      return new VMValue(this, resultPtr, ValueLifecycle.Owned);
+      return new VMValue(this, resultPtr, "owned");
     });
   }
 

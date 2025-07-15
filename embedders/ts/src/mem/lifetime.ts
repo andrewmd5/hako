@@ -1,4 +1,3 @@
-import { type MaybeAsyncBlock, maybeAsync } from "../helpers/asyncify-helpers";
 import type { SuccessOrFail } from "../vm/vm-interface";
 /**
  * A container for native values that need deterministic cleanup.

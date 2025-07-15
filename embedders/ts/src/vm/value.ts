@@ -1,15 +1,16 @@
 import { HakoError, PrimJSUseAfterFree } from "../etc/errors";
 import type { HakoExports } from "../etc/ffi";
 import {
-  EqualOp,
-  IsEqualOp,
+  type EqualOp,
   type JSType,
   type JSValuePointer,
   LEPUS_BOOLToBoolean,
+  PROPERTY_ENUM_ENUMERABLE,
+  PROPERTY_ENUM_STRING,
   type PromiseState,
-  PropertyEnumFlags,
+  type PropertyEnumFlags,
   type TypedArrayType,
-  ValueLifecycle,
+  type ValueLifecycle,
 } from "../etc/types";
 import { type NativeBox, Scope } from "../mem/lifetime";
 import type { VMContext } from "./context";
@@ -53,7 +54,7 @@ export class VMValue implements Disposable {
   constructor(
     context: VMContext,
     handle: JSValuePointer,
-    lifecycle: ValueLifecycle = ValueLifecycle.Owned
+    lifecycle: ValueLifecycle = "owned"
   ) {
     this.context = context;
     this.handle = handle;
@@ -144,7 +145,7 @@ export class VMValue implements Disposable {
       this.context.pointer,
       this.handle
     );
-    return new VMValue(this.context, newPtr, ValueLifecycle.Owned);
+    return new VMValue(this.context, newPtr, "owned");
   }
 
   /**
@@ -158,7 +159,7 @@ export class VMValue implements Disposable {
    */
   borrow(): VMValue {
     this.assertAlive();
-    return new VMValue(this.context, this.handle, ValueLifecycle.Borrowed);
+    return new VMValue(this.context, this.handle, "borrowed");
   }
 
   /**
@@ -218,7 +219,7 @@ export class VMValue implements Disposable {
       this.context.pointer,
       this.handle,
       this.context.container.exports.HAKO_GetUndefined(),
-      EqualOp.StrictEquals
+      0
     );
   }
 
@@ -461,7 +462,7 @@ export class VMValue implements Disposable {
         this.context.pointer,
         this.handle,
         this.context.container.exports.HAKO_GetTrue(),
-        EqualOp.StrictEquals
+        0
       );
     }
 
@@ -515,7 +516,7 @@ export class VMValue implements Disposable {
             throw error;
           }
         }
-        return new VMValue(this.context, propPtr, ValueLifecycle.Owned);
+        return new VMValue(this.context, propPtr, "owned");
       }
       let keyPtr: number;
       if (typeof key === "string") {
@@ -551,7 +552,7 @@ export class VMValue implements Disposable {
           throw error;
         }
       }
-      return new VMValue(this.context, propPtr, ValueLifecycle.Owned);
+      return new VMValue(this.context, propPtr, "owned");
     });
   }
 
@@ -715,7 +716,7 @@ export class VMValue implements Disposable {
    * @throws {PrimJSUseAfterFree} If the value has been disposed
    */
   *getOwnPropertyNames(
-    flags: number = PropertyEnumFlags.String | PropertyEnumFlags.Enumerable
+    flags: PropertyEnumFlags = PROPERTY_ENUM_STRING | PROPERTY_ENUM_ENUMERABLE
   ): Generator<VMValue, void, unknown> {
     this.assertAlive();
 
@@ -766,7 +767,7 @@ export class VMValue implements Disposable {
         currentIndex
       );
       try {
-        yield new VMValue(this.context, valuePtr, ValueLifecycle.Owned);
+        yield new VMValue(this.context, valuePtr, "owned");
       } catch (_e) {
         // Clean up any remaining value pointers if iteration is aborted
         for (let i = currentIndex; i < outLen; i++) {
@@ -841,7 +842,7 @@ export class VMValue implements Disposable {
       this.context.pointer,
       this.handle
     );
-    return new VMValue(this.context, resultPtr, ValueLifecycle.Owned);
+    return new VMValue(this.context, resultPtr, "owned");
   }
 
   /**
@@ -867,16 +868,11 @@ export class VMValue implements Disposable {
       );
       throw error;
     }
-    return new VMValue(this.context, jsonPtr, ValueLifecycle.Owned).consume(
-      (json) => {
-        const str = json.asString();
-        this.context.container.memory.freeCString(
-          this.context.pointer,
-          jsonPtr
-        );
-        return str;
-      }
-    );
+    return new VMValue(this.context, jsonPtr, "owned").consume((json) => {
+      const str = json.asString();
+      this.context.container.memory.freeCString(this.context.pointer, jsonPtr);
+      return str;
+    });
   }
 
   /**
@@ -1150,7 +1146,7 @@ export class VMValue implements Disposable {
    */
   dispose(): void {
     if (!this.alive) return;
-    if (this.lifecycle === ValueLifecycle.Borrowed) {
+    if (this.lifecycle === "borrowed") {
       this.handle = 0;
       return;
     }
@@ -1187,7 +1183,7 @@ export class VMValue implements Disposable {
     b: VMValue,
     ctx: number,
     compar: HakoExports["HAKO_IsEqual"],
-    equalityType: IsEqualOp = IsEqualOp.IsStrictlyEqual
+    equalityType: EqualOp = "strict"
   ): boolean {
     if (a === b) {
       return true;
@@ -1201,7 +1197,10 @@ export class VMValue implements Disposable {
       return false;
     }
 
-    const result = compar(ctx, a.getHandle(), b.getHandle(), equalityType);
+    const mapped =
+      equalityType === "strict" ? 0 : equalityType === "same" ? 1 : 2;
+
+    const result = compar(ctx, a.getHandle(), b.getHandle(), mapped);
     if (result === -1) {
       throw new Error("NOT IMPLEMENTED");
     }
@@ -1290,7 +1289,7 @@ export class VMValue implements Disposable {
       other,
       this.getContextPointer(),
       this.context.container.exports.HAKO_IsEqual,
-      IsEqualOp.IsStrictlyEqual
+      "strict"
     );
   }
 
@@ -1309,7 +1308,7 @@ export class VMValue implements Disposable {
       other,
       this.getContextPointer(),
       this.context.container.exports.HAKO_IsEqual,
-      IsEqualOp.IsSameValue
+      "same"
     );
   }
 
@@ -1329,7 +1328,7 @@ export class VMValue implements Disposable {
       other,
       this.getContextPointer(),
       this.context.container.exports.HAKO_IsEqual,
-      IsEqualOp.IsSameValueZero
+      "same-zero"
     );
   }
 

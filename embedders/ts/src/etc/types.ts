@@ -268,104 +268,51 @@ export type ExecutePendingJobsResult = DisposableResult<
   }
 >;
 //=============================================================================
-// Intrinsics Enum and Configuration
+// Intrinsics Constants and Configuration
 //=============================================================================
-/**
- * Bitfield enum representing built-in JavaScript features that can be enabled in a context.
- * Each bit represents a specific feature group.
- */
-export enum Intrinsic {
-  /** Basic object functionality (Object, Function, Array, etc.) */
-  BaseObjects = 1 << 0,
-  /** Date object and related functionality */
-  Date = 1 << 1,
-  /** eval() function and related functionality */
-  Eval = 1 << 2,
-  /** String.prototype.normalize() functionality */
-  StringNormalize = 1 << 3,
-  /** RegExp object and related functionality */
-  RegExp = 1 << 4,
-  /** RegExp compiler functionality */
-  RegExpCompiler = 1 << 5,
-  /** JSON object and related functionality */
-  JSON = 1 << 6,
-  /** Proxy object and related functionality */
-  Proxy = 1 << 7,
-  /** Map and Set objects and related functionality */
-  MapSet = 1 << 8,
-  /** TypedArray objects (Uint8Array, etc.) */
-  TypedArrays = 1 << 9,
-  /** Promise object and related functionality */
-  Promise = 1 << 10,
-  /** BigInt functionality */
-  BigInt = 1 << 11,
-  /** BigFloat functionality (non-standard) */
-  BigFloat = 1 << 12,
-  /** BigDecimal functionality (non-standard) */
-  BigDecimal = 1 << 13,
-  /** Operator overloading functionality (non-standard) */
-  OperatorOverloading = 1 << 14,
-  /** Extended bignum functionality (non-standard) */
-  BignumExt = 1 << 15,
-  /** Performance measurement API */
-  Performance = 1 << 16,
-  // Common sets of features
-  /** Default set of features for most contexts */
-  Default = BaseObjects |
-    Date |
-    Eval |
-    StringNormalize |
-    RegExp |
-    JSON |
-    MapSet |
-    TypedArrays |
-    Promise |
-    BigInt,
-  /** Minimal functionality (only BaseObjects) */
-  Basic = BaseObjects,
-  /** All available features */
-  All = 0xfffff,
-}
-/**
- * Configuration interface for enabling or disabling specific JavaScript language features.
- * Each property corresponds to a feature group represented in the Intrinsic enum.
- */
+
+export const INTRINSIC_BASE_OBJECTS = 1 << 0;
+export const INTRINSIC_DATE = 1 << 1;
+export const INTRINSIC_EVAL = 1 << 2;
+export const INTRINSIC_STRING_NORMALIZE = 1 << 3;
+export const INTRINSIC_REGEXP = 1 << 4;
+export const INTRINSIC_REGEXP_COMPILER = 1 << 5;
+export const INTRINSIC_JSON = 1 << 6;
+export const INTRINSIC_PROXY = 1 << 7;
+export const INTRINSIC_MAP_SET = 1 << 8;
+export const INTRINSIC_TYPED_ARRAYS = 1 << 9;
+export const INTRINSIC_PROMISE = 1 << 10;
+export const INTRINSIC_BIGINT = 1 << 11;
+export const INTRINSIC_BIGFLOAT = 1 << 12;
+export const INTRINSIC_BIGDECIMAL = 1 << 13;
+export const INTRINSIC_OPERATOR_OVERLOADING = 1 << 14;
+export const INTRINSIC_BIGNUM_EXT = 1 << 15;
+export const INTRINSIC_PERFORMANCE = 1 << 16;
+
+const INTRINSIC_FLAG_MAP = {
+  BaseObjects: INTRINSIC_BASE_OBJECTS,
+  Date: INTRINSIC_DATE,
+  Eval: INTRINSIC_EVAL,
+  StringNormalize: INTRINSIC_STRING_NORMALIZE,
+  RegExp: INTRINSIC_REGEXP,
+  RegExpCompiler: INTRINSIC_REGEXP_COMPILER,
+  JSON: INTRINSIC_JSON,
+  Proxy: INTRINSIC_PROXY,
+  MapSet: INTRINSIC_MAP_SET,
+  TypedArrays: INTRINSIC_TYPED_ARRAYS,
+  Promise: INTRINSIC_PROMISE,
+  BigInt: INTRINSIC_BIGINT,
+  BigFloat: INTRINSIC_BIGFLOAT,
+  BigDecimal: INTRINSIC_BIGDECIMAL,
+  OperatorOverloading: INTRINSIC_OPERATOR_OVERLOADING,
+  BignumExt: INTRINSIC_BIGNUM_EXT,
+  Performance: INTRINSIC_PERFORMANCE,
+} as const;
+
 export type Intrinsics = {
-  /** Basic object functionality (Object, Function, Array, etc.) */
-  BaseObjects?: boolean;
-  /** Date object and related functionality */
-  Date?: boolean;
-  /** eval() function and related functionality */
-  Eval?: boolean;
-  /** String.prototype.normalize() functionality */
-  StringNormalize?: boolean;
-  /** RegExp object and related functionality */
-  RegExp?: boolean;
-  /** RegExp compiler functionality */
-  RegExpCompiler?: boolean;
-  /** JSON object and related functionality */
-  JSON?: boolean;
-  /** Proxy object and related functionality */
-  Proxy?: boolean;
-  /** Map and Set objects and related functionality */
-  MapSet?: boolean;
-  /** TypedArray objects (Uint8Array, etc.) */
-  TypedArrays?: boolean;
-  /** Promise object and related functionality */
-  Promise?: boolean;
-  /** BigInt functionality */
-  BigInt?: boolean;
-  /** BigFloat functionality (non-standard) */
-  BigFloat?: boolean;
-  /** BigDecimal functionality (non-standard) */
-  BigDecimal?: boolean;
-  /** Operator overloading functionality (non-standard) */
-  OperatorOverloading?: boolean;
-  /** Extended bignum functionality (non-standard) */
-  BignumExt?: boolean;
-  /** Whether to enable the 'performance' object */
-  Performance?: boolean;
+  [K in keyof typeof INTRINSIC_FLAG_MAP]?: boolean;
 };
+
 /**
  * The default set of JavaScript language features enabled in a new context.
  * @see {@link ContextOptions}
@@ -382,33 +329,22 @@ export const DefaultIntrinsics = Object.freeze({
   TypedArrays: true,
   Promise: true,
 } as const satisfies Intrinsics);
+
 /**
- * Converts an Intrinsics object into the corresponding Intrinsic enum bitfield value.
+ * Converts an Intrinsics object into the corresponding bitfield value.
  *
  * @param intrinsics - The Intrinsics configuration object
- * @returns A combined Intrinsic enum value representing all enabled features
+ * @returns A combined value representing all enabled features
  */
-export function intrinsicsToFlags(intrinsics: Intrinsics): Intrinsic {
-  let result = 0;
-  if (intrinsics.BaseObjects) result |= Intrinsic.BaseObjects;
-  if (intrinsics.Date) result |= Intrinsic.Date;
-  if (intrinsics.Eval) result |= Intrinsic.Eval;
-  if (intrinsics.StringNormalize) result |= Intrinsic.StringNormalize;
-  if (intrinsics.RegExp) result |= Intrinsic.RegExp;
-  if (intrinsics.RegExpCompiler) result |= Intrinsic.RegExpCompiler;
-  if (intrinsics.JSON) result |= Intrinsic.JSON;
-  if (intrinsics.Proxy) result |= Intrinsic.Proxy;
-  if (intrinsics.MapSet) result |= Intrinsic.MapSet;
-  if (intrinsics.TypedArrays) result |= Intrinsic.TypedArrays;
-  if (intrinsics.Promise) result |= Intrinsic.Promise;
-  if (intrinsics.BigInt) result |= Intrinsic.BigInt;
-  if (intrinsics.BigFloat) result |= Intrinsic.BigFloat;
-  if (intrinsics.BigDecimal) result |= Intrinsic.BigDecimal;
-  if (intrinsics.OperatorOverloading) result |= Intrinsic.OperatorOverloading;
-  if (intrinsics.BignumExt) result |= Intrinsic.BignumExt;
-  if (intrinsics.Performance) result |= Intrinsic.Performance;
-  return result as Intrinsic;
+export function intrinsicsToFlags(intrinsics: Intrinsics): number {
+  return Object.entries(intrinsics).reduce((result, [key, enabled]) => {
+    if (enabled && key in INTRINSIC_FLAG_MAP) {
+      return result | INTRINSIC_FLAG_MAP[key as keyof typeof INTRINSIC_FLAG_MAP];
+    }
+    return result;
+  }, 0);
 }
+
 //=============================================================================
 // Context Configuration
 //=============================================================================
@@ -445,35 +381,27 @@ export interface ContextOptions {
    */
   maxStackSizeBytes?: number;
 }
+
 //=============================================================================
 // Evaluation Configuration
 //=============================================================================
+
+// EvalFlag constants
+export const EVAL_FLAG_GLOBAL = 0; // LEPUS_EVAL_TYPE_GLOBAL (0 << 0)
+export const EVAL_FLAG_MODULE = 1 << 0; // LEPUS_EVAL_TYPE_MODULE (1 << 0)
+export const EVAL_FLAG_DIRECT = 2 << 0; // LEPUS_EVAL_TYPE_DIRECT (2 << 0)
+export const EVAL_FLAG_INDIRECT = 3 << 0; // LEPUS_EVAL_TYPE_INDIRECT (3 << 0)
+export const EVAL_FLAG_TYPE_MASK = 3 << 0; // LEPUS_EVAL_TYPE_MASK (3 << 0)
+export const EVAL_FLAG_STRICT = 1 << 3; // LEPUS_EVAL_FLAG_STRICT (1 << 3)
+export const EVAL_FLAG_RESERVED = 1 << 4; // LEPUS_EVAL_FLAG_STRIP (1 << 4)
+export const EVAL_FLAG_COMPILE_ONLY = 1 << 5; // LEPUS_EVAL_FLAG_COMPILE_ONLY (1 << 5)
+export const EVAL_FLAG_DEBUGGER_NO_PERSIST_SCRIPT = 1 << 6; // LEPUS_DEBUGGER_NO_PERSIST_SCRIPT (1 << 6)
+
 /**
- * Flags controlling JavaScript code evaluation behavior.
- * Corresponds to the C API's eval flags.
+ * Type for evaluation flag values
  */
-export enum EvalFlag {
-  // Type flags
-  /** Evaluate as global code (default) */
-  Global = 0, // LEPUS_EVAL_TYPE_GLOBAL (0 << 0)
-  /** Evaluate as ES module code */
-  Module = 1 << 0, // LEPUS_EVAL_TYPE_MODULE (1 << 0)
-  /** Direct call (internal use) */
-  Direct = 2 << 0, // LEPUS_EVAL_TYPE_DIRECT (2 << 0)
-  /** Indirect call (internal use) */
-  Indirect = 3 << 0, // LEPUS_EVAL_TYPE_INDIRECT (3 << 0)
-  /** Mask for extracting type flags */
-  TypeMask = 3 << 0, // LEPUS_EVAL_TYPE_MASK (3 << 0)
-  // Feature flags
-  /** Force 'strict' mode */
-  Strict = 1 << 3, // LEPUS_EVAL_FLAG_STRICT (1 << 3)
-  /** reserved */
-  Reserved = 1 << 4, // LEPUS_EVAL_FLAG_STRIP (1 << 4)
-  /** Compile only (don't execute) */
-  CompileOnly = 1 << 5, // LEPUS_EVAL_FLAG_COMPILE_ONLY (1 << 5)
-  /** Don't persist the script for debugger (internal use) */
-  DebuggerNoPersistScript = 1 << 6, // LEPUS_DEBUGGER_NO_PERSIST_SCRIPT (1 << 6)
-}
+export type EvalFlag = number;
+
 /**
  * Bit flag for stripping source code
  * @internal
@@ -540,7 +468,7 @@ export function evalOptionsToFlags(
     return evalOptions;
   }
   if (evalOptions === undefined) {
-    return EvalFlag.Global;
+    return EVAL_FLAG_GLOBAL;
   }
   if (
     evalOptions.type !== undefined &&
@@ -553,13 +481,14 @@ export function evalOptionsToFlags(
   }
   const { type, strict, compileOnly, noPersist } = evalOptions;
   let flags = 0;
-  if (type === "global") flags |= EvalFlag.Global;
-  if (type === "module") flags |= EvalFlag.Module;
-  if (strict) flags |= EvalFlag.Strict;
-  if (compileOnly) flags |= EvalFlag.CompileOnly;
-  if (noPersist) flags |= EvalFlag.DebuggerNoPersistScript;
+  if (type === "global") flags |= EVAL_FLAG_GLOBAL;
+  if (type === "module") flags |= EVAL_FLAG_MODULE;
+  if (strict) flags |= EVAL_FLAG_STRICT;
+  if (compileOnly) flags |= EVAL_FLAG_COMPILE_ONLY;
+  if (noPersist) flags |= EVAL_FLAG_DEBUGGER_NO_PERSIST_SCRIPT;
   return flags;
 }
+
 //=============================================================================
 // Promise States
 //=============================================================================
@@ -573,66 +502,31 @@ export type PromiseState =
   | "fulfilled"
   /** Promise has been rejected with a reason */
   | "rejected";
-//=============================================================================
-// Equality Operations
-//=============================================================================
-/**
- * Different modes for comparing JavaScript values for equality.
- */
-export enum EqualOp {
-  /** Uses strict equality operator (===) */
-  StrictEquals = 0,
-  /** Uses Object.is() semantics */
-  SameValue = 1,
-  /** Similar to Object.is() but treats +0 and -0 as equal */
-  SameValueZero = 2,
-}
+
 //=============================================================================
 // Property Enumeration
 //=============================================================================
+
+// PropertyEnumFlags constants
+export const PROPERTY_ENUM_STRING = 1 << 0;
+export const PROPERTY_ENUM_SYMBOL = 1 << 1;
+export const PROPERTY_ENUM_PRIVATE = 1 << 2;
+export const PROPERTY_ENUM_ENUMERABLE = 1 << 4;
+export const PROPERTY_ENUM_NON_ENUMERABLE = 1 << 5;
+export const PROPERTY_ENUM_CONFIGURABLE = 1 << 6;
+export const PROPERTY_ENUM_NON_CONFIGURABLE = 1 << 7;
+export const PROPERTY_ENUM_NUMBER = 1 << 14;
+export const PROPERTY_ENUM_COMPLIANT = 1 << 15;
+
 /**
- * Flags for controlling property enumeration.
+ * Type for property enumeration flag values
  */
-export enum PropertyEnumFlags {
-  /** Include string property names */
-  String = 1 << 0,
-  /** Include symbol property names */
-  Symbol = 1 << 1,
-  /** Include private properties */
-  Private = 1 << 2,
-  /** Include enumerable properties */
-  Enumerable = 1 << 4,
-  /** Include non-enumerable properties */
-  NonEnumerable = 1 << 5,
-  /** Include configurable properties */
-  Configurable = 1 << 6,
-  /** Include non-configurable properties */
-  NonConfigurable = 1 << 7,
-  // Custom flags for the wrapper
-  /** Include numeric properties */
-  Number = 1 << 14,
-  /** Use standards-compliant property enumeration */
-  Compliant = 1 << 15,
-}
+export type PropertyEnumFlags = number;
+
 //=============================================================================
 // JavaScript Types
 //=============================================================================
-/**
- * ABI-level JavaScript type tags as understood by the underlying engine.
- */
-export enum ABIJSType {
-  Null = 0,
-  Undefined = 1,
-  Boolean = 2,
-  Number = 3,
-  String = 4,
-  Object = 5,
-  Function = 6,
-  Symbol = 7,
-  BigInt = 8,
-  Module = 9,
-  Unknown = -1,
-}
+
 /**
  * String representation of JavaScript types, aligned with typeof operator results.
  */
@@ -645,20 +539,15 @@ export type JSType =
   | "number"
   | "bigint"
   | "function";
+
 //=============================================================================
 // Value Lifecycle Management
 //=============================================================================
 /**
  * Lifecycle modes for JavaScript values.
  */
-export enum ValueLifecycle {
-  /** Value is owned by us and must be explicitly freed */
-  Owned = 0,
-  /** Value is borrowed and should not be freed */
-  Borrowed = 1,
-  /** Value is temporary and will be automatically freed */
-  Temporary = 2,
-}
+export type ValueLifecycle = "owned" | "borrowed" | "temporary";
+
 //=============================================================================
 // Memory Usage Information
 //=============================================================================
@@ -718,6 +607,7 @@ export interface MemoryUsage {
   /** Memory used by binary objects in bytes */
   binary_object_size: number;
 }
+
 //=============================================================================
 // Property Descriptors
 //=============================================================================
@@ -737,6 +627,7 @@ export interface PropertyDescriptor {
   /** Setter function */
   set?: (this: VMValue, value: VMValue) => void;
 }
+
 //=============================================================================
 // Resource Limits
 //=============================================================================
@@ -753,20 +644,18 @@ export interface ResourceLimitOptions {
   /** How often to check memory usage (every N steps) */
   memoryCheckInterval?: number;
 }
+
 //=============================================================================
 // Additional Types
 //=============================================================================
-/**
- * Equality operation modes for isEqual.
- */
-export enum IsEqualOp {
-  /** Uses === operator semantics */
-  IsStrictlyEqual = 0,
-  /** Uses Object.is() semantics */
-  IsSameValue = 1,
-  /** Uses Array.prototype.includes() semantics (treats +0 and -0 as equal) */
-  IsSameValueZero = 2,
-}
+/** Uses === operator semantics */
+type EqualOpStrict = "strict";
+/** Uses Object.is() semantics */
+type EqualOpSame = "same";
+/** Uses Array.prototype.includes() semantics (treats +0 and -0 as equal) */
+type EqualOpSameZero = "same-zero";
+export type EqualOp = EqualOpStrict | EqualOpSame | EqualOpSameZero;
+
 /**
  * Promise executor function type, compatible with standard JavaScript Promise.
  */
@@ -774,10 +663,12 @@ export type PromiseExecutor<ResolveT, RejectT> = (
   resolve: (value: ResolveT | PromiseLike<ResolveT>) => void,
   reject: (reason: RejectT) => void
 ) => void;
+
 /**
  * Result type for VMContext operations.
  */
 export type VMContextResult<S> = DisposableResult<S, VMValue>;
+
 /**
  * Interface for Error objects with an options property containing a cause.
  */
@@ -786,6 +677,7 @@ interface ErrorWithOptions extends Error {
     cause?: unknown;
   };
 }
+
 /**
  * Type guard to check if an Error has options with a cause property.
  *
@@ -800,6 +692,7 @@ export function hasOptionsWithCause(error: Error): error is ErrorWithOptions {
     "cause" in (error.options as object)
   );
 }
+
 /**
  * Detects circular references within an object and throws a TypeError when found.
  *
@@ -838,6 +731,7 @@ export function detectCircularReferences(obj: unknown, path = "root"): void {
   }
   traverse(obj, path);
 }
+
 //=============================================================================
 // Build Information
 //=============================================================================
@@ -895,6 +789,7 @@ export type HakoBuildInfo = {
   /** Whether hako was compiled with profiling enabled */
   hasHakoProfiler: boolean;
 };
+
 /**
  * Type of JavaScript TypedArray.
  */

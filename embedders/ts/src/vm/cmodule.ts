@@ -1,9 +1,8 @@
 import { HakoError } from "../etc/errors";
-import {
-  type ClassConstructorHandler,
-  type ClassOptions,
-  type HostCallbackFunction,
-  ValueLifecycle,
+import type {
+  ClassConstructorHandler,
+  ClassOptions,
+  HostCallbackFunction,
 } from "../etc/types";
 import { Scope } from "../mem/lifetime";
 import type { VMContext } from "./context";
@@ -77,7 +76,7 @@ export class CModuleBuilder implements Disposable {
         this.vmContext.pointer,
         this.modulePtr
       ),
-      ValueLifecycle.Owned
+      "owned"
     );
   }
 
@@ -243,7 +242,7 @@ export class CModuleInitializer implements Disposable {
         this.vmContext.pointer,
         this.modulePtr
       ),
-      ValueLifecycle.Owned
+      "owned"
     );
   }
 
@@ -460,7 +459,7 @@ export class CModuleClass implements Disposable {
       );
     }
 
-    this.proto = new VMValue(this.context, protoPtr, ValueLifecycle.Owned);
+    this.proto = new VMValue(this.context, protoPtr, "owned");
 
     if (options.methods) {
       for (const [methodName, methodFn] of Object.entries(options.methods)) {
@@ -501,7 +500,7 @@ export class CModuleClass implements Disposable {
         );
       }
 
-      return new VMValue(this.context, constructorPtr, ValueLifecycle.Owned);
+      return new VMValue(this.context, constructorPtr, "owned");
     });
 
     if (options.staticMethods) {
@@ -588,7 +587,7 @@ export class CModuleClass implements Disposable {
     const instance = new VMValue(
       this.context,
       instancePtr,
-      ValueLifecycle.Owned
+      "owned"
     );
 
     if (opaque !== undefined) {
@@ -618,7 +617,7 @@ export class CModuleClass implements Disposable {
     const instance = new VMValue(
       this.context,
       instancePtr,
-      ValueLifecycle.Owned
+      "owned"
     );
 
     if (opaque !== undefined) {
