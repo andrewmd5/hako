@@ -359,6 +359,276 @@ fibonacci(100);
     });
   });
 
+  describe("Crypto API", () => {
+  describe("getRandomValues", () => {
+    it("should fill Uint8Array with random values", () => {
+      using result = context.evalCode(`
+        const array = new Uint8Array(16);
+        crypto.getRandomValues(array);
+        array;
+      `);
+      
+      const jsValue = result.unwrap();
+      expect(jsValue.isTypedArray()).toBe(true);
+      expect(jsValue.getTypedArrayType()).toBe("Uint8Array");
+      
+      const data = jsValue.copyTypedArray();
+      expect(data).toBeInstanceOf(Uint8Array);
+      expect(data.length).toBe(16);
+      
+      // Check that values are not all zeros (very unlikely with random data)
+      const allZeros = Array.from(data).every(byte => byte === 0);
+      expect(allZeros).toBe(false);
+    });
+
+    it("should work with different typed array types", () => {
+      using result = context.evalCode(`
+        const results = {};
+        
+        const uint8 = new Uint8Array(4);
+        crypto.getRandomValues(uint8);
+        results.uint8 = Array.from(uint8);
+        
+        const uint16 = new Uint16Array(4);
+        crypto.getRandomValues(uint16);
+        results.uint16 = Array.from(uint16);
+        
+        const uint32 = new Uint32Array(4);
+        crypto.getRandomValues(uint32);
+        results.uint32 = Array.from(uint32);
+        
+        results;
+      `);
+      
+      using value = context.unwrapResult<VMValue>(result);
+      using nativeValue = value.toNativeValue<any>();
+      const results = nativeValue.value;
+      
+      expect(results.uint8).toHaveLength(4);
+      expect(results.uint16).toHaveLength(4);
+      expect(results.uint32).toHaveLength(4);
+      
+      // Check that arrays contain non-zero values
+      expect(results.uint8.some(v => v !== 0)).toBe(true);
+      expect(results.uint16.some(v => v !== 0)).toBe(true);
+      expect(results.uint32.some(v => v !== 0)).toBe(true);
+    });
+
+    it("should throw error for arrays exceeding 65536 bytes", () => {
+      using result = context.evalCode(`
+        try {
+          const largeArray = new Uint8Array(65537);
+          crypto.getRandomValues(largeArray);
+          false; // Should not reach here
+        } catch (error) {
+          error.message;
+        }
+      `);
+      
+      const errorMessage = result.unwrap().asString();
+      expect(errorMessage).toContain("65536");
+    });
+
+    it("should throw error for invalid array types", () => {
+      using result = context.evalCode(`
+        try {
+          crypto.getRandomValues(new Float32Array(4));
+          false; // Should not reach here
+        } catch (error) {
+          error.message;
+        }
+      `);
+      
+      const errorMessage = result.unwrap().asString();
+      expect(errorMessage).toContain("getRandomValues requires");
+    });
+
+    it("should return the same array that was passed in", () => {
+      using result = context.evalCode(`
+        const array = new Uint8Array(8);
+        const returned = crypto.getRandomValues(array);
+        returned === array;
+      `);
+      
+      expect(result.unwrap().asBoolean()).toBe(true);
+    });
+  });
+
+  describe("randomUUID", () => {
+    it("should generate valid UUID v4", () => {
+      using result = context.evalCode(`crypto.randomUUID()`);
+      
+      const uuid = result.unwrap().asString();
+      expect(uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    });
+
+    it("should generate different UUIDs on each call", () => {
+      using result = context.evalCode(`
+        const uuid1 = crypto.randomUUID();
+        const uuid2 = crypto.randomUUID();
+        const uuid3 = crypto.randomUUID();
+        [uuid1, uuid2, uuid3];
+      `);
+      
+      using value = context.unwrapResult<VMValue>(result);
+      using nativeValue = value.toNativeValue<string[]>();
+      const uuids = nativeValue.value;
+      
+      expect(uuids).toHaveLength(3);
+      expect(uuids[0]).not.toBe(uuids[1]);
+      expect(uuids[1]).not.toBe(uuids[2]);
+      expect(uuids[0]).not.toBe(uuids[2]);
+    });
+
+    it("should have correct UUID v4 structure", () => {
+      using result = context.evalCode(`
+        const uuid = crypto.randomUUID();
+        const parts = uuid.split('-');
+        ({
+          length: uuid.length,
+          parts: parts.length,
+          partLengths: parts.map(p => p.length),
+          version: uuid[14], // Should be '4'
+          variant: uuid[19]  // Should be '8', '9', 'a', or 'b'
+      });
+      `);
+      
+      using value = context.unwrapResult<VMValue>(result);
+      using nativeValue = value.toNativeValue<any>();
+      const info = nativeValue.value;
+      
+      expect(info.length).toBe(36);
+      expect(info.parts).toBe(5);
+      expect(info.partLengths).toEqual([8, 4, 4, 4, 12]);
+      expect(info.version).toBe('4');
+      expect(['8', '9', 'a', 'b']).toContain(info.variant);
+    });
+  });
+
+  describe("randomUUIDv7", () => {
+    it("should generate valid UUID v7", () => {
+      using result = context.evalCode(`crypto.randomUUIDv7()`);
+      
+      const uuid = result.unwrap().asString();
+      expect(uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    });
+
+    it("should generate UUIDs with timestamps in order", () => {
+      using result = context.evalCode(`
+        const uuid1 = crypto.randomUUIDv7();
+        // Small delay to ensure different timestamps
+        for (let i = 0; i < 1000; i++) { Math.random(); }
+        const uuid2 = crypto.randomUUIDv7();
+        
+        // Extract timestamp portions (first 12 hex chars)
+        const ts1 = uuid1.substring(0, 13).replace('-', '');
+        const ts2 = uuid2.substring(0, 13).replace('-', '');
+        
+        ({
+          uuid1,
+          uuid2,
+          ts1,
+          ts2,
+          ordered: ts1 <= ts2
+      });
+      `);
+      
+      using value = context.unwrapResult<VMValue>(result);
+      using nativeValue = value.toNativeValue<any>();
+      const info = nativeValue.value;
+      
+      expect(info.ordered).toBe(true);
+      expect(info.uuid1).not.toBe(info.uuid2);
+    });
+
+    it("should accept custom timestamp", () => {
+      using result = context.evalCode(`
+        const customTime = 1640995200000; // 2022-01-01 00:00:00 UTC
+        const uuid = crypto.randomUUIDv7(customTime);
+        
+        // Extract the timestamp portion
+        const timestampHex = uuid.substring(0, 13).replace('-', '');
+        const extractedTime = parseInt(timestampHex, 16);
+        
+        ({
+          uuid,
+          customTime,
+          extractedTime,
+          matches: extractedTime === customTime
+      });
+      `);
+      
+      using value = context.unwrapResult<VMValue>(result);
+      using nativeValue = value.toNativeValue<any>();
+      const info = nativeValue.value;
+      
+      expect(info.matches).toBe(true);
+      expect(info.uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    });
+
+    it("should have correct UUID v7 structure", () => {
+      using result = context.evalCode(`
+        const uuid = crypto.randomUUIDv7();
+        ({
+          length: uuid.length,
+          version: uuid[14], // Should be '7'
+          variant: uuid[19]  // Should be '8', '9', 'a', or 'b'
+      });
+      `);
+      
+      using value = context.unwrapResult<VMValue>(result);
+      using nativeValue = value.toNativeValue<any>();
+      const info = nativeValue.value;
+      
+      expect(info.length).toBe(36);
+      expect(info.version).toBe('7');
+      expect(['8', '9', 'a', 'b']).toContain(info.variant);
+    });
+
+    it("should be sortable by creation time", () => {
+      using result = context.evalCode(`
+        const uuids = [];
+        const times = [];
+        
+        for (let i = 0; i < 5; i++) {
+          const time = Date.now() + i * 100; // Ensure different timestamps
+          uuids.push(crypto.randomUUIDv7(time));
+          times.push(time);
+        }
+        
+        const sorted = [...uuids].sort();
+        const timeSorted = uuids.slice(); // Should already be in time order
+        
+        ({
+          uuids,
+          sorted,
+          isAlreadySorted: JSON.stringify(sorted) === JSON.stringify(timeSorted)
+      });
+      `);
+      
+      using value = context.unwrapResult<VMValue>(result);
+      using nativeValue = value.toNativeValue<any>();
+      const info = nativeValue.value;
+      
+      expect(info.isAlreadySorted).toBe(true);
+    });
+
+    it("should throw error for invalid timestamp", () => {
+      using result = context.evalCode(`
+        try {
+          crypto.randomUUIDv7("invalid");
+          false; // Should not reach here
+        } catch (error) {
+          error.message;
+        }
+      `);
+      
+      const errorMessage = result.unwrap().asString();
+      expect(errorMessage).toContain("must be a number");
+    });
+  });
+});
+
   describe("C Module support", () => {
     it("should create a C module with the builder API", () => {
       let initWasCalled = false;

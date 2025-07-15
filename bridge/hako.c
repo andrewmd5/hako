@@ -595,7 +595,9 @@ LEPUSContext* WASM_EXPORT(HAKO_NewContext)(LEPUSRuntime* rt,
   if (intrinsics & HAKO_Intrinsic_Performance) {
     LEPUS_AddIntrinsicPerformance(ctx);
   }
-
+  if (intrinsics & HAKO_Intrinsic_Crypto) {
+    LEPUS_AddIntrinsicCrypto(ctx);
+  }
   return ctx;
 }
 

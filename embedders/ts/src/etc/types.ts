@@ -288,6 +288,7 @@ export const INTRINSIC_BIGDECIMAL = 1 << 13;
 export const INTRINSIC_OPERATOR_OVERLOADING = 1 << 14;
 export const INTRINSIC_BIGNUM_EXT = 1 << 15;
 export const INTRINSIC_PERFORMANCE = 1 << 16;
+export const INTRINSIC_CRYPTO = 1 << 17;
 
 const INTRINSIC_FLAG_MAP = {
   BaseObjects: INTRINSIC_BASE_OBJECTS,
@@ -307,6 +308,7 @@ const INTRINSIC_FLAG_MAP = {
   OperatorOverloading: INTRINSIC_OPERATOR_OVERLOADING,
   BignumExt: INTRINSIC_BIGNUM_EXT,
   Performance: INTRINSIC_PERFORMANCE,
+  Crypto: INTRINSIC_CRYPTO,
 } as const;
 
 export type Intrinsics = {
