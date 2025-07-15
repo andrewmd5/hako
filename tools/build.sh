@@ -28,7 +28,7 @@ WASM_MAX_MEMORY=268435456     # 256MB
 WASM_OUTPUT_NAME="hako.wasm"
 BUILD_DIR="${PROJECT_ROOT}/bridge/build"
 BUILD_TYPE="Release"
-CLEAN_BUILD=false
+CLEAN_BUILD=true
 
 # Feature flags (matching CMakeLists.txt options)
 ENABLE_QUICKJS_DEBUGGER=OFF
@@ -170,13 +170,13 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Check if wasm-opt is available when building in Release mode
+# Check if wasm-post-opt is available when building in Release mode
 if [[ "$BUILD_TYPE" == "Release" ]]; then
-    if ! command -v wasm-opt &> /dev/null; then
-        echo "⚠️  WARNING: Building in Release mode but 'wasm-opt' was not found in PATH"
-        echo "   Release builds normally use wasm-opt for optimization."
+    if ! command -v wasm-post-opt &> /dev/null; then
+        echo "⚠️  WARNING: Building in Release mode but 'wasm-post-opt' was not found in PATH"
+        echo "   Release builds normally use wasm-post-opt for optimization and asyncify."
         echo "   Install Binaryen to get wasm-opt: https://github.com/WebAssembly/binaryen"
-        echo "   Your build will continue but may not have optimal size/performance."
+        echo "   Your build will continue but may not have optimal size/performance or asyncify support."
         echo ""
     fi
 fi
@@ -278,12 +278,39 @@ if [ ! -f "${BUILD_DIR}/${WASM_OUTPUT_NAME}" ]; then
     exit 1
 fi
 
+# Run wasm-post-opt for asyncify
+if [[ -x "$(command -v wasm-post-opt)" ]]; then
+    echo "Running wasm-post-opt with asyncify..."
+    # Create a temporary file for the optimized output
+    TEMP_WASM="${BUILD_DIR}/${WASM_OUTPUT_NAME}.tmp"
+    
+    # Set optimization level based on build type
+    if [[ "$BUILD_TYPE" == "Debug" ]]; then
+        OPT_LEVEL="-g"  # Retain debug symbols
+    else
+        OPT_LEVEL="-O4"  # Optimize for speed
+    fi
+    
+    # Run wasm-post-opt with asyncify for call_function and load_module
+    wasm-post-opt "${BUILD_DIR}/${WASM_OUTPUT_NAME}" \
+        ${OPT_LEVEL} \
+        --enable-bulk-memory \
+        --enable-simd \
+        --enable-nontrapping-float-to-int \
+        -o "${TEMP_WASM}"
+    
+    # Replace the original with the optimized version
+    mv "${TEMP_WASM}" "${BUILD_DIR}/${WASM_OUTPUT_NAME}"
+    echo "Asyncify completed"
+fi
+
+# Strip debug symbols if wasm-strip is available
 if [[ "$BUILD_TYPE" == "Release" && -x "$(command -v wasm-strip)" ]]; then
+   echo "Stripping debug symbols..."
    wasm-strip "${BUILD_DIR}/${WASM_OUTPUT_NAME}"
 fi
 
 echo "Build successful: ${BUILD_DIR}/${WASM_OUTPUT_NAME}"
 echo "File size: $(du -h "${BUILD_DIR}/${WASM_OUTPUT_NAME}" | cut -f1)"
-
 
 exit 0
