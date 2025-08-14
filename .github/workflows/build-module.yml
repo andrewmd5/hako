@@ -37,6 +37,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: hako-wasm
-          path: bridge/hako.wasm
+          path: bridge/build/hako.wasm
           retention-days: 90
           if-no-files-found: error
