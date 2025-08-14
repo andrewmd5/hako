@@ -1170,6 +1170,24 @@ LEPUSValue* HAKO_BJSON_Decode(LEPUSContext* ctx, JSVoid* buffer, size_t length);
  */
 LEPUSValue* HAKO_ToJson(LEPUSContext* ctx, LEPUSValueConst* val, int indent);
 
+
+/**
+ * @brief Parses a string to a JSON object
+ * @category Value Operations
+ *
+ * @param ctx Context to use
+ * @param json string to parse
+ * @param buf_len Length of the buffer
+ * @param filename Name of the file
+ * @return LEPUSValue* - JSON object
+ * @tsparam ctx JSContextPointer
+ * @tsparam json CString
+ * @tsparam buf_len number
+ * @tsparam filename CString
+ * @tsreturn JSValuePointer
+ */
+LEPUSValue* HAKO_ParseJson(LEPUSContext* ctx, CString* json, size_t buf_len, CString* filename);
+
 /**
  * @brief Checks if a value is an Error
  * @category Error Handling

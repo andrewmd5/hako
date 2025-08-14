@@ -1605,6 +1605,15 @@ LEPUSValue* WASM_EXPORT(HAKO_ToJson)(LEPUSContext* ctx, LEPUSValueConst* val,
   return jsvalue_to_heap(ctx, result);
 }
 
+LEPUSValue* WASM_EXPORT(HAKO_ParseJson)(LEPUSContext* ctx, CString* json, size_t buf_len,
+                           CString* filename) {
+  if (!json) {
+    return jsvalue_to_heap(ctx,
+                    LEPUS_ThrowTypeError(ctx, "Invalid JSON string"));
+  }
+  return jsvalue_to_heap(ctx, LEPUS_ExtParseJSON(ctx, json, buf_len, filename));
+}
+
 LEPUS_BOOL WASM_EXPORT(HAKO_IsError)(LEPUSContext* ctx, LEPUSValueConst* val) {
   return LEPUS_IsError(ctx, *val);
 }

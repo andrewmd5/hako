@@ -1,0 +1,54 @@
+From f8973b95375890056550be801468c7d3d1d85037 Mon Sep 17 00:00:00 2001
+From: andrewmd5 <1297077+andrewmd5@users.noreply.github.com>
+Date: Thu, 14 Aug 2025 23:07:55 +0900
+Subject: [PATCH] feat: expose ExtParseJSON
+
+---
+ src/interpreter/quickjs/include/quickjs.h |  4 ++++
+ src/interpreter/quickjs/source/quickjs.cc | 15 +++++++++++++++
+ 2 files changed, 19 insertions(+)
+
+diff --git a/src/interpreter/quickjs/include/quickjs.h b/src/interpreter/quickjs/include/quickjs.h
+index 7e85792..85ff8fe 100644
+--- a/src/interpreter/quickjs/include/quickjs.h
++++ b/src/interpreter/quickjs/include/quickjs.h
+@@ -1163,6 +1163,10 @@ int LEPUS_GetOwnProperty(LEPUSContext *ctx, LEPUSPropertyDescriptor *desc,
+ 
+ LEPUSValue LEPUS_ParseJSON(LEPUSContext *ctx, const char *buf, size_t buf_len,
+                            const char *filename);
++
++LEPUSValue LEPUS_ExtParseJSON(LEPUSContext *ctx, const char *buf, size_t buf_len,
++                               const char *filename);
++                               
+ LEPUSValue LEPUS_Call(LEPUSContext *ctx, LEPUSValueConst func_obj,
+                       LEPUSValueConst this_obj, int argc,
+                       LEPUSValueConst *argv);
+diff --git a/src/interpreter/quickjs/source/quickjs.cc b/src/interpreter/quickjs/source/quickjs.cc
+index f316940..ecd6f47 100644
+--- a/src/interpreter/quickjs/source/quickjs.cc
++++ b/src/interpreter/quickjs/source/quickjs.cc
+@@ -45986,6 +45986,21 @@ fail:
+ #endif
+ }
+ 
++
++LEPUSValue LEPUS_ExtParseJSON(LEPUSContext *ctx, const char *buf, size_t buf_len,
++                               const char *filename) {
++    LEPUSValue obj;
++    
++    // Check if JSON optimization is enabled and use the appropriate parser
++    if (!json_opt_disabled(ctx->rt)) {
++        obj = JS_ParseJSONOPT(ctx, buf, buf_len, filename);
++    } else {
++        obj = LEPUS_ParseJSON(ctx, buf, buf_len, filename);
++    }
++    
++    return obj;
++}
++
+ QJS_STATIC LEPUSValue internalize_json_property(LEPUSContext *ctx,
+                                                 LEPUSValueConst holder,
+                                                 JSAtom name,
+-- 
+2.50.1
+
