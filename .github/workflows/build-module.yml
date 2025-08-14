@@ -1,0 +1,42 @@
+name: Build hako.wasm
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - '**'
+  pull_request:
+    branches:
+      - '**'
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          
+      - name: Setup cmake
+        uses: jwlawson/actions-setup-cmake@802fa1a2c4e212495c05bf94dba2704a92a472be
+        with:
+          cmake-version: '4.0.x'
+          
+      - name: envsetup
+        run: chmod +x tools/envsetup.sh && tools/envsetup.sh
+        
+      - name: patch
+        run: chmod +x tools/patch.sh && tools/patch.sh
+        
+      - name: build
+        run: chmod +x tools/build.sh && tools/build.sh
+        
+      - name: Upload hako.wasm artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hako-wasm
+          path: bridge/hako.wasm
+          retention-days: 90
+          if-no-files-found: error
